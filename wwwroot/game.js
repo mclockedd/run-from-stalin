@@ -80,6 +80,7 @@ function connect(onOpenMsg) {
     myId = null; latest = null;
     if (Sound.current) Sound.current.pause();
     Sound.mode = null;
+    showPause(false);
     show("home");
   };
 }
@@ -305,9 +306,26 @@ function canMoveNow() {
 renderer.domElement.addEventListener("click", () => {
   if (canMoveNow() || (latest && latest.phase === "countdown")) renderer.domElement.requestPointerLock();
 });
+const pauseOverlay = document.getElementById("pauseOverlay");
+function showPause(on) { pauseOverlay.classList.toggle("hidden", !on); }
+
 document.addEventListener("pointerlockchange", () => {
-  locked = document.pointerLockElement === renderer.domElement;
+  const nowLocked = document.pointerLockElement === renderer.domElement;
+  // Releasing the mouse (Esc) while in the world opens the pause menu.
+  if (locked && !nowLocked && latest && ["lobby", "playing", "countdown"].includes(latest.phase))
+    showPause(true);
+  if (nowLocked) showPause(false);
+  locked = nowLocked;
 });
+
+document.getElementById("resumeBtn").onclick = () => {
+  showPause(false);
+  renderer.domElement.requestPointerLock();
+};
+document.getElementById("leaveBtn").onclick = () => {
+  showPause(false);
+  if (ws) ws.close();
+};
 document.addEventListener("mousemove", (e) => {
   if (!locked) return;
   yaw -= e.movementX * sensitivity;
@@ -354,6 +372,7 @@ function onState(msg) {
   const go = document.getElementById("gameoverOverlay");
   if (msg.phase === "gameover") {
     document.exitPointerLock?.();
+    showPause(false);
     go.classList.remove("hidden");
     const t = document.getElementById("goText");
     if (msg.winner === "stalin") { t.textContent = `${msg.stalinName} caught everyone!`; t.className = "stalin"; }
