@@ -195,6 +195,14 @@ button:disabled { opacity: .4; cursor: not-allowed; }
   pointer-events: auto; z-index: 5;
 }
 
+#radar {
+  position: absolute; bottom: 14px; left: 14px;
+  border-radius: 8px; border: 1px solid rgba(212,160,23,.4);
+  background: rgba(10,8,6,.55); pointer-events: none; z-index: 4;
+}
+#radar.hidden { display: none; }
+#playHint.hidden { display: none; }
+
 #pauseTitle { font-size: 40px; font-weight: 900; letter-spacing: 1px; margin-bottom: 8px; }
 #pauseOverlay .lockbox { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 #pauseOverlay .big { width: 240px; margin-top: 14px; }

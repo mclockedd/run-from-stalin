@@ -17,6 +17,7 @@ public class Player
     public bool IsStalin;
     public bool Caught;
     public bool Connected = true;
+    public DateTime LastTaunt = DateTime.MinValue;
 }
 
 public class Wall
@@ -42,8 +43,8 @@ public class Room
     public string StalinName = "";
 
     // game arena
-    public const float WorldW = 1800;
-    public const float WorldH = 1200;
+    public const float WorldW = 2800;
+    public const float WorldH = 2000;
     public List<Wall> GameWalls = new();
 
     // lobby room
@@ -70,18 +71,17 @@ public class Room
         GameWalls.Add(new Wall(0, WorldH - t, WorldW, t));
         GameWalls.Add(new Wall(0, 0, t, WorldH));
         GameWalls.Add(new Wall(WorldW - t, 0, t, WorldH));
-        // Interior "buildings" — gives runners things to dodge behind.
-        GameWalls.Add(new Wall(250, 200, 260, 120));
-        GameWalls.Add(new Wall(700, 150, 120, 300));
-        GameWalls.Add(new Wall(1100, 250, 300, 100));
-        GameWalls.Add(new Wall(1500, 450, 120, 320));
-        GameWalls.Add(new Wall(300, 550, 120, 350));
-        GameWalls.Add(new Wall(600, 650, 320, 110));
-        GameWalls.Add(new Wall(1050, 600, 130, 130));
-        GameWalls.Add(new Wall(1300, 850, 280, 120));
-        GameWalls.Add(new Wall(250, 980, 350, 110));
-        GameWalls.Add(new Wall(750, 920, 120, 200));
-        GameWalls.Add(new Wall(1000, 950, 180, 90));
+        // Interior "buildings" scattered across the larger arena.
+        var b = new (float x, float y, float w, float h)[]
+        {
+            (300, 250, 360, 140), (900, 200, 160, 360), (1400, 300, 400, 130),
+            (2050, 250, 150, 400), (2400, 520, 160, 420), (250, 660, 150, 420),
+            (700, 820, 420, 140), (1300, 650, 170, 170), (1520, 960, 360, 150),
+            (2060, 820, 150, 300), (350, 1260, 420, 140), (960, 1220, 160, 420),
+            (1360, 1420, 420, 140), (1920, 1320, 150, 420), (2360, 1260, 300, 150),
+            (610, 1580, 300, 140), (2120, 1660, 420, 140), (1260, 1720, 300, 130),
+        };
+        foreach (var w in b) GameWalls.Add(new Wall(w.x, w.y, w.w, w.h));
     }
 
     private void BuildLobbyMap()
@@ -106,7 +106,8 @@ public class GameServer
     private const float StalinSpeed = 255f;
     private const float Radius = 18f;
     private const float CatchDist = 30f;
-    private const float RoundSeconds = 90f;
+    private const float RoundSeconds = 120f;
+    private static readonly TimeSpan TauntCooldown = TimeSpan.FromSeconds(1.2);
 
     // ---- connection handling -------------------------------------------------
 
@@ -153,6 +154,9 @@ public class GameServer
                             break;
                         case "spin" when room != null && player != null:
                             TrySpin(room, player);
+                            break;
+                        case "taunt" when room != null && player != null:
+                            TryTaunt(room, player);
                             break;
                         case "restart" when room != null && player != null:
                             if (room.HostId == player.Id && (room.Phase == "gameover" || room.Phase == "playing"))
@@ -265,6 +269,17 @@ public class GameServer
         _ = Broadcast(room, new { type = "wheel", winnerId = room.WheelWinnerId, players = entries });
     }
 
+    // A taunt: clients play taunt.mp3 positionally from this player's location,
+    // so Stalin can hear roughly where they are. Rate-limited to curb spam.
+    private void TryTaunt(Room room, Player p)
+    {
+        if (room.Phase != "playing" || p.Caught) return;
+        var now = DateTime.UtcNow;
+        if (now - p.LastTaunt < TauntCooldown) return;
+        p.LastTaunt = now;
+        _ = Broadcast(room, new { type = "taunt", id = p.Id });
+    }
+
     // ---- main tick (all rooms) ----------------------------------------------
 
     public void Tick(float dt)
@@ -316,8 +331,8 @@ public class GameServer
         for (int i = 0; i < runners.Count; i++)
         {
             double ang = (Math.PI * 2 * i) / Math.Max(1, runners.Count);
-            runners[i].X = (float)(Room.WorldW / 2 + Math.Cos(ang) * 700);
-            runners[i].Y = (float)(Room.WorldH / 2 + Math.Sin(ang) * 450);
+            runners[i].X = (float)(Room.WorldW / 2 + Math.Cos(ang) * 1150);
+            runners[i].Y = (float)(Room.WorldH / 2 + Math.Sin(ang) * 820);
             runners[i].X = Math.Clamp(runners[i].X, 80, Room.WorldW - 80);
             runners[i].Y = Math.Clamp(runners[i].Y, 80, Room.WorldH - 80);
         }

@@ -94,11 +94,12 @@ function handle(msg) {
     case "joined":
       myId = msg.id; roomCode = msg.code; isHost = msg.isHost;
       document.getElementById("lobbyCodeVal").textContent = roomCode;
-      Sound.unlock(); Sound.setMode("lobby");
+      Sound.unlock(); ensureAudioCtx(); Sound.setMode("lobby");
       show("game");
       break;
     case "wheel": runWheel(msg.players, msg.winnerId); break;
     case "state": latest = msg; onState(msg); break;
+    case "taunt": playTaunt(msg.id); break;
   }
 }
 
@@ -207,6 +208,31 @@ scene.fog = new THREE.Fog(0x3a3550, 300, 1900);
 
 const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 6000);
 camera.rotation.order = "YXZ";
+
+// Spatial audio: listener rides the camera, taunts play from the taunter's body.
+const listener = new THREE.AudioListener();
+camera.add(listener);
+let tauntBuffer = null;
+new THREE.AudioLoader().load("sounds/taunt.mp3", (b) => { tauntBuffer = b; }, undefined, () => {});
+function ensureAudioCtx() {
+  if (listener.context && listener.context.state === "suspended") listener.context.resume().catch(() => {});
+}
+function playTaunt(playerId) {
+  if (!tauntBuffer || Sound.muted) return;
+  const a = avatars.get(playerId);
+  if (!a) return;
+  try {
+    const pa = new THREE.PositionalAudio(listener);
+    pa.setBuffer(tauntBuffer);
+    pa.setRefDistance(260);
+    pa.setRolloffFactor(1.3);
+    pa.setDistanceModel("inverse");
+    if (pa.panner) pa.panner.panningModel = "HRTF";
+    a.group.add(pa);
+    pa.onEnded = () => { try { a.group.remove(pa); } catch {} };
+    pa.play();
+  } catch {}
+}
 
 scene.add(new THREE.HemisphereLight(0xfff1d0, 0x4a3a2a, 1.25));
 const sun = new THREE.DirectionalLight(0xffe6b8, 1.1);
@@ -332,11 +358,16 @@ document.addEventListener("mousemove", (e) => {
   pitch -= e.movementY * sensitivity;
   pitch = Math.max(-1.2, Math.min(1.2, pitch));
 });
+let lastTauntSent = 0;
 window.addEventListener("keydown", (e) => {
   if (typing()) return;                              // let people type their name/code
   if (MOVE_KEYS.includes(e.code)) { e.preventDefault(); pressed.add(e.code); }
   if (e.code === "KeyE" && isHost && latest && latest.phase === "lobby" && latest.players.length >= 2) {
     send({ type: "spin" });
+  }
+  if (e.code === "KeyT" && latest && latest.phase === "playing") {
+    const now = performance.now();
+    if (now - lastTauntSent >= 1200) { lastTauntSent = now; ensureAudioCtx(); send({ type: "taunt" }); }
   }
 });
 window.addEventListener("keyup", (e) => pressed.delete(e.code));
@@ -350,6 +381,7 @@ function onState(msg) {
   const lobby = msg.phase === "lobby";
   document.getElementById("lobbyHud").classList.toggle("hidden", !lobby);
   document.getElementById("hud").style.display = lobby ? "none" : "flex";
+  document.getElementById("playHint").classList.toggle("hidden", msg.phase !== "playing");
 
   // audio per phase — fresh random track when entering lobby vs a round
   Sound.setMode(lobby ? "lobby" : "game");
@@ -433,6 +465,43 @@ function syncAvatars(msg) {
   }
 }
 
+// ---- radar / minimap -------------------------------------------------------
+const radar = document.getElementById("radar");
+const rctx = radar.getContext("2d");
+function drawRadar() {
+  const active = latest && (latest.phase === "playing" || latest.phase === "countdown");
+  radar.classList.toggle("hidden", !active);
+  if (!active) return;
+
+  const W = radar.width, H = radar.height;
+  const sx = W / latest.world.w, sy = H / latest.world.h;
+  rctx.clearRect(0, 0, W, H);
+
+  // map walls
+  rctx.fillStyle = "rgba(190,160,115,.55)";
+  for (const w of latest.walls || [])
+    rctx.fillRect(w.x * sx, w.y * sy, Math.max(1, w.w * sx), Math.max(1, w.h * sy));
+
+  // player blips, per visibility rules:
+  //  - runners see all runners (incl. self), never Stalin
+  //  - Stalin sees no players, only the map
+  const me = latest.players.find((p) => p.id === myId);
+  const amStalin = me && me.stalin;
+  if (!amStalin) {
+    for (const p of latest.players) {
+      if (p.stalin) continue;
+      const a = avatars.get(p.id);
+      const px = (a ? a.render.x : p.x) * sx;
+      const py = (a ? a.render.y : p.y) * sy;
+      const isMe = p.id === myId;
+      rctx.beginPath();
+      rctx.arc(px, py, isMe ? 4 : 3, 0, Math.PI * 2);
+      rctx.fillStyle = isMe ? "#ffffff" : (p.caught ? "rgba(150,150,150,.5)" : "#d4a017");
+      rctx.fill();
+    }
+  }
+}
+
 // ---- input send loop -------------------------------------------------------
 let sendAccum = 0;
 function sendInput(dt) {
@@ -478,6 +547,7 @@ function renderScene(dt) {
   camera.rotation.x = pitch;
 
   renderer.render(scene, camera);
+  drawRadar();
 }
 
 function frame(now) {
