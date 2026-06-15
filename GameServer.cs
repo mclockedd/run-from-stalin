@@ -1,0 +1,444 @@
+using System.Net.WebSockets;
+using System.Text;
+using System.Text.Json;
+using System.Collections.Concurrent;
+
+namespace RunFromStalin;
+
+public class Player
+{
+    public string Id = Guid.NewGuid().ToString("N")[..8];
+    public string Name = "Player";
+    public WebSocket Socket = null!;
+    public readonly SemaphoreSlim SendLock = new(1, 1);
+    public float X, Y;
+    public bool Up, Down, Left, Right;
+    public bool IsStalin;
+    public bool Caught;
+    public bool Connected = true;
+}
+
+public class Wall
+{
+    public float X, Y, W, H;
+    public Wall(float x, float y, float w, float h) { X = x; Y = y; W = w; H = h; }
+}
+
+public class Room
+{
+    public string Code = "";
+    public string HostId = "";
+    public string Phase = "lobby"; // lobby, wheel, countdown, playing, gameover
+    public readonly ConcurrentDictionary<string, Player> Players = new();
+
+    public float WheelTimer;
+    public string WheelWinnerId = "";
+    public float Countdown;
+    public float TimeLeft;
+    public float GameOverTimer;
+    public string Winner = "";       // "stalin" | "runners"
+    public string StalinName = "";
+
+    public const float WorldW = 1800;
+    public const float WorldH = 1200;
+    public List<Wall> Walls = new();
+
+    public Room()
+    {
+        BuildMap();
+    }
+
+    private void BuildMap()
+    {
+        Walls.Clear();
+        // Border walls
+        float t = 30;
+        Walls.Add(new Wall(0, 0, WorldW, t));
+        Walls.Add(new Wall(0, WorldH - t, WorldW, t));
+        Walls.Add(new Wall(0, 0, t, WorldH));
+        Walls.Add(new Wall(WorldW - t, 0, t, WorldH));
+        // Interior "buildings" — gives runners things to dodge behind.
+        Walls.Add(new Wall(250, 200, 260, 120));
+        Walls.Add(new Wall(700, 150, 120, 300));
+        Walls.Add(new Wall(1100, 250, 300, 100));
+        Walls.Add(new Wall(1500, 450, 120, 320));
+        Walls.Add(new Wall(300, 550, 120, 350));
+        Walls.Add(new Wall(600, 650, 320, 110));
+        Walls.Add(new Wall(1050, 600, 130, 130));
+        Walls.Add(new Wall(1300, 850, 280, 120));
+        Walls.Add(new Wall(250, 980, 350, 110));
+        Walls.Add(new Wall(750, 920, 120, 200));
+        Walls.Add(new Wall(1000, 950, 180, 90));
+    }
+}
+
+public class GameServer
+{
+    private readonly ConcurrentDictionary<string, Room> _rooms = new();
+    private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+
+    private const float RunnerSpeed = 230f;
+    private const float StalinSpeed = 255f;
+    private const float Radius = 18f;
+    private const float CatchDist = 30f;
+    private const float RoundSeconds = 90f;
+
+    // ---- connection handling -------------------------------------------------
+
+    public async Task HandleClient(WebSocket socket)
+    {
+        Room? room = null;
+        Player? player = null;
+        var buffer = new byte[8192];
+        var sb = new StringBuilder();
+
+        try
+        {
+            while (socket.State == WebSocketState.Open)
+            {
+                sb.Clear();
+                WebSocketReceiveResult result;
+                do
+                {
+                    result = await socket.ReceiveAsync(buffer, CancellationToken.None);
+                    if (result.MessageType == WebSocketMessageType.Close)
+                        return;
+                    sb.Append(Encoding.UTF8.GetString(buffer, 0, result.Count));
+                } while (!result.EndOfMessage);
+
+                JsonDocument doc;
+                try { doc = JsonDocument.Parse(sb.ToString()); }
+                catch { continue; }
+
+                using (doc)
+                {
+                    var root = doc.RootElement;
+                    var type = root.TryGetProperty("type", out var tEl) ? tEl.GetString() : null;
+
+                    switch (type)
+                    {
+                        case "create":
+                        case "join":
+                            (room, player) = await HandleJoin(socket, root, type);
+                            break;
+                        case "input" when player != null:
+                            player.Up = GetBool(root, "up");
+                            player.Down = GetBool(root, "down");
+                            player.Left = GetBool(root, "left");
+                            player.Right = GetBool(root, "right");
+                            break;
+                        case "spin" when room != null && player != null:
+                            TrySpin(room, player);
+                            break;
+                        case "restart" when room != null && player != null:
+                            if (room.HostId == player.Id && (room.Phase == "gameover" || room.Phase == "playing"))
+                                ResetToLobby(room);
+                            break;
+                    }
+                }
+            }
+        }
+        catch { /* socket died */ }
+        finally
+        {
+            if (room != null && player != null)
+            {
+                player.Connected = false;
+                room.Players.TryRemove(player.Id, out _);
+                if (room.Players.IsEmpty)
+                {
+                    _rooms.TryRemove(room.Code, out _);
+                }
+                else
+                {
+                    // Reassign host if needed.
+                    if (room.HostId == player.Id)
+                        room.HostId = room.Players.Keys.First();
+                    if (room.Phase == "lobby")
+                        await BroadcastLobby(room);
+                }
+            }
+        }
+    }
+
+    private async Task<(Room?, Player?)> HandleJoin(WebSocket socket, JsonElement root, string type)
+    {
+        var name = (root.TryGetProperty("name", out var nEl) ? nEl.GetString() : null) ?? "Player";
+        name = name.Trim();
+        if (name.Length == 0) name = "Player";
+        if (name.Length > 14) name = name[..14];
+
+        Room room;
+        if (type == "create")
+        {
+            room = new Room { Code = NewCode() };
+            _rooms[room.Code] = room;
+        }
+        else
+        {
+            var code = (root.TryGetProperty("code", out var cEl) ? cEl.GetString() : "")?.Trim().ToUpperInvariant() ?? "";
+            if (!_rooms.TryGetValue(code, out var found))
+            {
+                await SendRaw(socket, new { type = "error", message = "No party found with that code." });
+                return (null, null);
+            }
+            if (found.Phase != "lobby")
+            {
+                await SendRaw(socket, new { type = "error", message = "That party already started a round." });
+                return (null, null);
+            }
+            room = found;
+        }
+
+        var player = new Player { Name = name, Socket = socket };
+        if (room.Players.IsEmpty) room.HostId = player.Id;
+        room.Players[player.Id] = player;
+
+        await SendRaw(socket, new { type = "joined", id = player.Id, code = room.Code, isHost = room.HostId == player.Id });
+        await BroadcastLobby(room);
+        return (room, player);
+    }
+
+    private string NewCode()
+    {
+        const string chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+        var rng = Random.Shared;
+        while (true)
+        {
+            var code = new string(Enumerable.Range(0, 4).Select(_ => chars[rng.Next(chars.Length)]).ToArray());
+            if (!_rooms.ContainsKey(code)) return code;
+        }
+    }
+
+    // ---- the wheel -----------------------------------------------------------
+
+    private void TrySpin(Room room, Player requester)
+    {
+        if (room.HostId != requester.Id) return;
+        if (room.Phase != "lobby") return;
+        if (room.Players.Count < 2) return;
+
+        var ids = room.Players.Keys.ToList();
+        room.WheelWinnerId = ids[Random.Shared.Next(ids.Count)];
+        room.Phase = "wheel";
+        room.WheelTimer = 4.5f;
+
+        var entries = room.Players.Values.Select(p => new { id = p.Id, name = p.Name }).ToList();
+        _ = Broadcast(room, new { type = "wheel", winnerId = room.WheelWinnerId, players = entries });
+    }
+
+    // ---- main tick (all rooms) ----------------------------------------------
+
+    public void Tick(float dt)
+    {
+        if (dt > 0.1f) dt = 0.1f; // clamp big stalls
+        foreach (var room in _rooms.Values)
+        {
+            switch (room.Phase)
+            {
+                case "wheel":
+                    room.WheelTimer -= dt;
+                    if (room.WheelTimer <= 0) StartRound(room);
+                    break;
+                case "countdown":
+                    room.Countdown -= dt;
+                    if (room.Countdown <= 0) room.Phase = "playing";
+                    _ = BroadcastState(room);
+                    break;
+                case "playing":
+                    UpdatePlaying(room, dt);
+                    _ = BroadcastState(room);
+                    break;
+                case "gameover":
+                    room.GameOverTimer -= dt;
+                    if (room.GameOverTimer <= 0) ResetToLobby(room);
+                    else _ = BroadcastState(room);
+                    break;
+            }
+        }
+    }
+
+    private void StartRound(Room room)
+    {
+        var players = room.Players.Values.ToList();
+        foreach (var p in players)
+        {
+            p.IsStalin = p.Id == room.WheelWinnerId;
+            p.Caught = false;
+            p.Up = p.Down = p.Left = p.Right = false;
+        }
+        // Stalin spawns centre, runners spread around the edges.
+        var stalin = players.FirstOrDefault(p => p.IsStalin);
+        if (stalin != null) { stalin.X = Room.WorldW / 2; stalin.Y = Room.WorldH / 2; }
+        var runners = players.Where(p => !p.IsStalin).ToList();
+        for (int i = 0; i < runners.Count; i++)
+        {
+            double ang = (Math.PI * 2 * i) / Math.Max(1, runners.Count);
+            runners[i].X = (float)(Room.WorldW / 2 + Math.Cos(ang) * 700);
+            runners[i].Y = (float)(Room.WorldH / 2 + Math.Sin(ang) * 450);
+            runners[i].X = Math.Clamp(runners[i].X, 80, Room.WorldW - 80);
+            runners[i].Y = Math.Clamp(runners[i].Y, 80, Room.WorldH - 80);
+        }
+        room.StalinName = stalin?.Name ?? "?";
+        room.TimeLeft = RoundSeconds;
+        room.Countdown = 3f;
+        room.Phase = "countdown";
+    }
+
+    private void UpdatePlaying(Room room, float dt)
+    {
+        room.TimeLeft -= dt;
+
+        foreach (var p in room.Players.Values)
+        {
+            if (p.Caught) continue;
+            float vx = (p.Right ? 1 : 0) - (p.Left ? 1 : 0);
+            float vy = (p.Down ? 1 : 0) - (p.Up ? 1 : 0);
+            if (vx != 0 || vy != 0)
+            {
+                float len = MathF.Sqrt(vx * vx + vy * vy);
+                vx /= len; vy /= len;
+                float speed = p.IsStalin ? StalinSpeed : RunnerSpeed;
+                MoveWithCollision(room, p, vx * speed * dt, vy * speed * dt);
+            }
+        }
+
+        // Catch detection.
+        var stalin = room.Players.Values.FirstOrDefault(p => p.IsStalin && !p.Caught);
+        if (stalin != null)
+        {
+            foreach (var p in room.Players.Values)
+            {
+                if (p.IsStalin || p.Caught) continue;
+                float dx = p.X - stalin.X, dy = p.Y - stalin.Y;
+                if (dx * dx + dy * dy <= CatchDist * CatchDist)
+                    p.Caught = true;
+            }
+        }
+
+        // Win checks.
+        bool anyRunnerFree = room.Players.Values.Any(p => !p.IsStalin && !p.Caught);
+        if (!anyRunnerFree && room.Players.Values.Any(p => !p.IsStalin))
+            EndRound(room, "stalin");
+        else if (room.TimeLeft <= 0)
+            EndRound(room, "runners");
+    }
+
+    private void EndRound(Room room, string winner)
+    {
+        room.Winner = winner;
+        room.Phase = "gameover";
+        room.GameOverTimer = 7f;
+    }
+
+    private void ResetToLobby(Room room)
+    {
+        room.Phase = "lobby";
+        room.Winner = "";
+        foreach (var p in room.Players.Values)
+        {
+            p.IsStalin = false;
+            p.Caught = false;
+            p.Up = p.Down = p.Left = p.Right = false;
+        }
+        _ = BroadcastLobby(room);
+    }
+
+    // ---- collision -----------------------------------------------------------
+
+    private void MoveWithCollision(Room room, Player p, float dx, float dy)
+    {
+        p.X += dx;
+        ResolveAxis(room, p, true);
+        p.Y += dy;
+        ResolveAxis(room, p, false);
+        p.X = Math.Clamp(p.X, Radius, Room.WorldW - Radius);
+        p.Y = Math.Clamp(p.Y, Radius, Room.WorldH - Radius);
+    }
+
+    private void ResolveAxis(Room room, Player p, bool xAxis)
+    {
+        foreach (var w in room.Walls)
+        {
+            float closestX = Math.Clamp(p.X, w.X, w.X + w.W);
+            float closestY = Math.Clamp(p.Y, w.Y, w.Y + w.H);
+            float dx = p.X - closestX, dy = p.Y - closestY;
+            if (dx * dx + dy * dy >= Radius * Radius) continue;
+
+            // Push out along the axis we just moved.
+            if (xAxis)
+                p.X = (p.X < w.X + w.W / 2) ? w.X - Radius : w.X + w.W + Radius;
+            else
+                p.Y = (p.Y < w.Y + w.H / 2) ? w.Y - Radius : w.Y + w.H + Radius;
+        }
+    }
+
+    // ---- broadcasting --------------------------------------------------------
+
+    private Task BroadcastLobby(Room room)
+    {
+        var players = room.Players.Values
+            .Select(p => new { id = p.Id, name = p.Name, isHost = room.HostId == p.Id })
+            .ToList();
+        return Broadcast(room, new { type = "lobby", code = room.Code, hostId = room.HostId, phase = room.Phase, players });
+    }
+
+    private Task BroadcastState(Room room)
+    {
+        var players = room.Players.Values.Select(p => new
+        {
+            id = p.Id,
+            name = p.Name,
+            x = MathF.Round(p.X, 1),
+            y = MathF.Round(p.Y, 1),
+            stalin = p.IsStalin,
+            caught = p.Caught
+        }).ToList();
+
+        var msg = new
+        {
+            type = "state",
+            phase = room.Phase,
+            timeLeft = MathF.Max(0, MathF.Round(room.TimeLeft, 1)),
+            countdown = MathF.Ceiling(MathF.Max(0, room.Countdown)),
+            winner = room.Winner,
+            stalinName = room.StalinName,
+            world = new { w = Room.WorldW, h = Room.WorldH },
+            walls = room.Walls.Select(w => new { x = w.X, y = w.Y, w = w.W, h = w.H }),
+            players
+        };
+        return Broadcast(room, msg);
+    }
+
+    private async Task Broadcast(Room room, object payload)
+    {
+        var json = JsonSerializer.SerializeToUtf8Bytes(payload, JsonOpts);
+        foreach (var p in room.Players.Values)
+            await SendBytes(p, json);
+    }
+
+    private async Task SendRaw(WebSocket socket, object payload)
+    {
+        var json = JsonSerializer.SerializeToUtf8Bytes(payload, JsonOpts);
+        try
+        {
+            await socket.SendAsync(json, WebSocketMessageType.Text, true, CancellationToken.None);
+        }
+        catch { }
+    }
+
+    private async Task SendBytes(Player p, byte[] json)
+    {
+        if (p.Socket.State != WebSocketState.Open) return;
+        await p.SendLock.WaitAsync();
+        try
+        {
+            await p.Socket.SendAsync(json, WebSocketMessageType.Text, true, CancellationToken.None);
+        }
+        catch { }
+        finally { p.SendLock.Release(); }
+    }
+
+    private static bool GetBool(JsonElement root, string name)
+        => root.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.True;
+}

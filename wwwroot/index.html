@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Run From Stalin</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- HOME -->
+<div id="home" class="screen active">
+  <div class="panel">
+    <h1>RUN FROM <span class="red">STALIN</span></h1>
+    <p class="tag">Spin the wheel. One of you becomes Stalin. The rest run.</p>
+    <input id="nameInput" maxlength="14" placeholder="Your name" autocomplete="off" />
+    <button id="createBtn" class="big">Create Party</button>
+    <div class="or">— or —</div>
+    <div class="joinrow">
+      <input id="codeInput" maxlength="4" placeholder="CODE" autocomplete="off" />
+      <button id="joinBtn">Join</button>
+    </div>
+    <div id="homeError" class="error"></div>
+  </div>
+</div>
+
+<!-- LOBBY -->
+<div id="lobby" class="screen">
+  <div class="panel">
+    <h2>Party Code</h2>
+    <div id="codeDisplay" class="code">----</div>
+    <p class="tag">Share this code with friends on the same network.</p>
+    <ul id="playerList" class="players"></ul>
+    <button id="spinBtn" class="big">Spin the Wheel</button>
+    <p id="lobbyHint" class="tag"></p>
+  </div>
+</div>
+
+<!-- WHEEL -->
+<div id="wheelScreen" class="screen">
+  <h2 id="wheelTitle">Choosing Stalin…</h2>
+  <canvas id="wheel" width="420" height="420"></canvas>
+</div>
+
+<!-- GAME -->
+<div id="game" class="screen">
+  <canvas id="board"></canvas>
+  <div id="hud">
+    <div id="role" class="role"></div>
+    <div id="timer" class="timer">90</div>
+    <div id="alive" class="alive"></div>
+  </div>
+  <div id="countdownOverlay" class="bigoverlay hidden"></div>
+  <div id="gameoverOverlay" class="bigoverlay hidden">
+    <div id="goText"></div>
+    <button id="againBtn" class="big hidden">Back to Lobby</button>
+    <div id="goSub" class="tag"></div>
+  </div>
+  <div id="mobileHint" class="mobilehint">Use WASD or arrow keys to move</div>
+</div>
+
+<script src="game.js"></script>
+</body>
+</html>
