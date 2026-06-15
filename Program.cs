@@ -10,6 +10,28 @@ app.UseWebSockets();
 
 var game = new GameServer();
 
+// Lists the audio files dropped into wwwroot/sounds, grouped by name prefix,
+// so the client can pick a random track per category. Add/remove files freely;
+// no config to edit. Convention: name starts with "lobby", "game", or "kill".
+app.MapGet("/api/sounds", () =>
+{
+    var dir = Path.Combine(app.Environment.WebRootPath ?? "wwwroot", "sounds");
+    string[] Cat(string prefix)
+    {
+        if (!Directory.Exists(dir)) return Array.Empty<string>();
+        return Directory.EnumerateFiles(dir)
+            .Select(Path.GetFileName)
+            .Where(f => f is not null && f.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                     && (f.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase)
+                      || f.EndsWith(".ogg", StringComparison.OrdinalIgnoreCase)
+                      || f.EndsWith(".wav", StringComparison.OrdinalIgnoreCase)))
+            .Select(f => "/sounds/" + f)
+            .OrderBy(f => f)
+            .ToArray();
+    }
+    return Results.Json(new { lobby = Cat("lobby"), game = Cat("game"), kill = Cat("kill") });
+});
+
 app.Map("/ws", async context =>
 {
     if (!context.WebSockets.IsWebSocketRequest)

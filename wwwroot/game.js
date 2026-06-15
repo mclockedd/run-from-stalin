@@ -24,39 +24,46 @@ function show(name) {
 }
 
 // ---- audio -----------------------------------------------------------------
+// Tracks are discovered from /api/sounds (any files named lobby*, game*, kill*
+// in wwwroot/sounds). A fresh random track is picked each time we switch mode
+// (enter the lobby / start a round); a random kill clip plays on each catch.
 const Sound = {
-  lobby: new Audio("sounds/lobby-music.mp3"),
-  game: new Audio("sounds/game-music.mp3"),
-  kill: new Audio("sounds/kill.mp3"),
-  current: null,
-  ready: false,
+  pools: { lobby: [], game: [], kill: [] },
+  mode: null,        // "lobby" | "game"
+  current: null,     // current looping HTMLAudioElement
+  ready: false,      // becomes true after the first user gesture
   muted: localStorage.getItem("rfs_muted") === "1",
-  init() {
-    this.lobby.loop = true; this.lobby.volume = 0.45;
-    this.game.loop = true;  this.game.volume = 0.45;
-    this.kill.volume = 0.8;
+  async load() {
+    try { this.pools = await (await fetch("/api/sounds")).json(); } catch { /* silent */ }
   },
-  unlock() { this.ready = true; },          // call after a user gesture
-  play(name) {
-    const track = name === "game" ? this.game : this.lobby;
-    if (this.current === track) return;
-    if (this.current) this.current.pause();
-    this.current = track;
-    if (this.ready && !this.muted) track.play().catch(() => {});
+  unlock() { this.ready = true; },
+  pick(arr) { return arr && arr.length ? arr[Math.floor(Math.random() * arr.length)] : null; },
+  setMode(mode) {
+    if (mode === this.mode) return;        // already in this mode → keep playing
+    this.mode = mode;
+    if (this.current) { this.current.pause(); this.current = null; }
+    const url = this.pick(this.pools[mode]);
+    if (!url) return;
+    const a = new Audio(url);
+    a.loop = true; a.volume = 0.45;
+    this.current = a;
+    if (this.ready && !this.muted) a.play().catch(() => {});
   },
   playKill() {
     if (this.muted || !this.ready) return;
-    try { const k = this.kill.cloneNode(); k.volume = 0.85; k.play().catch(() => {}); } catch {}
+    const url = this.pick(this.pools.kill);
+    if (!url) return;
+    try { const k = new Audio(url); k.volume = 0.85; k.play().catch(() => {}); } catch {}
   },
   setMuted(m) {
     this.muted = m;
     localStorage.setItem("rfs_muted", m ? "1" : "0");
-    if (m) { this.lobby.pause(); this.game.pause(); }
+    if (m) { if (this.current) this.current.pause(); }
     else if (this.current) this.current.play().catch(() => {});
     refreshMuteBtn();
   },
 };
-Sound.init();
+Sound.load();
 const muteBtn = document.getElementById("muteBtn");
 function refreshMuteBtn() { muteBtn.textContent = Sound.muted ? "🔇" : "🔊"; }
 muteBtn.onclick = () => Sound.setMuted(!Sound.muted);
@@ -71,7 +78,8 @@ function connect(onOpenMsg) {
   ws.onclose = () => {
     if (myId) showHomeError("Disconnected from server.");
     myId = null; latest = null;
-    Sound.play("lobby"); Sound.lobby.pause();
+    if (Sound.current) Sound.current.pause();
+    Sound.mode = null;
     show("home");
   };
 }
@@ -85,7 +93,7 @@ function handle(msg) {
     case "joined":
       myId = msg.id; roomCode = msg.code; isHost = msg.isHost;
       document.getElementById("lobbyCodeVal").textContent = roomCode;
-      Sound.unlock(); Sound.play("lobby");
+      Sound.unlock(); Sound.setMode("lobby");
       show("game");
       break;
     case "wheel": runWheel(msg.players, msg.winnerId); break;
@@ -335,9 +343,8 @@ function onState(msg) {
   document.getElementById("lobbyHud").classList.toggle("hidden", !lobby);
   document.getElementById("hud").style.display = lobby ? "none" : "flex";
 
-  // audio per phase
-  if (lobby || msg.phase === "gameover") Sound.play("lobby");
-  else Sound.play("game");
+  // audio per phase — fresh random track when entering lobby vs a round
+  Sound.setMode(lobby ? "lobby" : "game");
 
   if (lobby) {
     isHost = msg.hostId === myId;
