@@ -45,7 +45,7 @@ const Sound = {
     const url = this.pick(this.pools[mode]);
     if (!url) return;
     const a = new Audio(url);
-    a.loop = true; a.volume = 0.45;
+    a.loop = true; a.volume = 0.18;   // background music sits low under the SFX
     this.current = a;
     if (this.ready && !this.muted) a.play().catch(() => {});
   },
