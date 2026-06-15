@@ -307,7 +307,6 @@ renderer.domElement.addEventListener("click", () => {
 });
 document.addEventListener("pointerlockchange", () => {
   locked = document.pointerLockElement === renderer.domElement;
-  updateLockPrompt();
 });
 document.addEventListener("mousemove", (e) => {
   if (!locked) return;
@@ -324,15 +323,6 @@ window.addEventListener("keydown", (e) => {
 });
 window.addEventListener("keyup", (e) => pressed.delete(e.code));
 window.addEventListener("blur", () => pressed.clear());
-
-function updateLockPrompt() {
-  const p = document.getElementById("lockPrompt");
-  const inWorld = latest && ["lobby", "playing", "countdown"].includes(latest.phase);
-  p.classList.toggle("hidden", !(inWorld && !locked));
-  document.getElementById("lockTitle").textContent =
-    latest && latest.phase === "lobby" ? "Click to look around" :
-    latest && latest.phase === "countdown" ? "Get ready…" : "Click to play";
-}
 
 // ---- HUD / overlays from state ---------------------------------------------
 function onState(msg) {
@@ -373,7 +363,6 @@ function onState(msg) {
   } else go.classList.add("hidden");
 
   syncAvatars(msg);
-  updateLockPrompt();
 
   // Safeguard: if requestAnimationFrame is being throttled (background tab,
   // some headless contexts), draw on the incoming state so the world still
