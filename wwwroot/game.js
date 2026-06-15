@@ -234,6 +234,18 @@ function playTaunt(playerId) {
   } catch {}
 }
 
+// Local-only footstep loop — only YOU hear your own walking.
+const walkAudio = new Audio("sounds/fart%20walk.mp3");
+walkAudio.loop = true;
+walkAudio.volume = 0.5;
+function updateWalkSound() {
+  const moving = MOVE_KEYS.some((k) => pressed.has(k));
+  const me = latest && latest.players.find((p) => p.id === myId);
+  const should = canMoveNow() && moving && !(me && me.caught) && !Sound.muted && Sound.ready;
+  if (should) { if (walkAudio.paused) walkAudio.play().catch(() => {}); }
+  else if (!walkAudio.paused) { walkAudio.pause(); }
+}
+
 scene.add(new THREE.HemisphereLight(0xfff1d0, 0x4a3a2a, 1.25));
 const sun = new THREE.DirectionalLight(0xffe6b8, 1.1);
 sun.position.set(0.5, 1, 0.3);
@@ -487,18 +499,20 @@ function drawRadar() {
   //  - Stalin sees no players, only the map
   const me = latest.players.find((p) => p.id === myId);
   const amStalin = me && me.stalin;
-  if (!amStalin) {
-    for (const p of latest.players) {
-      if (p.stalin) continue;
-      const a = avatars.get(p.id);
-      const px = (a ? a.render.x : p.x) * sx;
-      const py = (a ? a.render.y : p.y) * sy;
-      const isMe = p.id === myId;
-      rctx.beginPath();
-      rctx.arc(px, py, isMe ? 4 : 3, 0, Math.PI * 2);
-      rctx.fillStyle = isMe ? "#ffffff" : (p.caught ? "rgba(150,150,150,.5)" : "#d4a017");
-      rctx.fill();
+  for (const p of latest.players) {
+    const isMe = p.id === myId;
+    if (!isMe) {
+      if (amStalin) continue;     // Stalin sees no OTHER players on radar
+      if (p.stalin) continue;     // runners never see Stalin
     }
+    const a = avatars.get(p.id);
+    const px = (a ? a.render.x : p.x) * sx;
+    const py = (a ? a.render.y : p.y) * sy;
+    rctx.beginPath();
+    rctx.arc(px, py, isMe ? 4.5 : 3, 0, Math.PI * 2);
+    rctx.fillStyle = isMe ? (p.stalin ? "#e74c3c" : "#ffffff")
+                          : (p.caught ? "rgba(150,150,150,.5)" : "#d4a017");
+    rctx.fill();
   }
 }
 
@@ -548,6 +562,7 @@ function renderScene(dt) {
 
   renderer.render(scene, camera);
   drawRadar();
+  updateWalkSound();
 }
 
 function frame(now) {

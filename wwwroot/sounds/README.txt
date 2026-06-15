@@ -10,6 +10,10 @@ How they play:
 - Each time a ROUND STARTS, one random track from the game pool plays (loops).
 - Each time Stalin CATCHES someone, one random clip from the kill pool plays once.
 
+Two SPECIAL files are referenced by exact name (not pools):
+  taunt.mp3        -> played positionally when a player presses T
+  fart walk.mp3    -> looping footstep sound, only the moving player hears it
+
 Formats: .mp3 (safest, works everywhere), .ogg, or .wav.
 
 Notes:
