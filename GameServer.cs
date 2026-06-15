@@ -12,7 +12,8 @@ public class Player
     public WebSocket Socket = null!;
     public readonly SemaphoreSlim SendLock = new(1, 1);
     public float X, Y;
-    public bool Up, Down, Left, Right;
+    public float InX, InY;   // desired movement direction (world space, normalized client-side)
+    public float Face;       // yaw the player is looking, radians (cosmetic, for other clients)
     public bool IsStalin;
     public bool Caught;
     public bool Connected = true;
@@ -122,10 +123,9 @@ public class GameServer
                             (room, player) = await HandleJoin(socket, root, type);
                             break;
                         case "input" when player != null:
-                            player.Up = GetBool(root, "up");
-                            player.Down = GetBool(root, "down");
-                            player.Left = GetBool(root, "left");
-                            player.Right = GetBool(root, "right");
+                            player.InX = (float)GetDouble(root, "mx");
+                            player.InY = (float)GetDouble(root, "my");
+                            player.Face = (float)GetDouble(root, "face");
                             break;
                         case "spin" when room != null && player != null:
                             TrySpin(room, player);
@@ -265,7 +265,7 @@ public class GameServer
         {
             p.IsStalin = p.Id == room.WheelWinnerId;
             p.Caught = false;
-            p.Up = p.Down = p.Left = p.Right = false;
+            p.InX = p.InY = 0;
         }
         // Stalin spawns centre, runners spread around the edges.
         var stalin = players.FirstOrDefault(p => p.IsStalin);
@@ -292,12 +292,11 @@ public class GameServer
         foreach (var p in room.Players.Values)
         {
             if (p.Caught) continue;
-            float vx = (p.Right ? 1 : 0) - (p.Left ? 1 : 0);
-            float vy = (p.Down ? 1 : 0) - (p.Up ? 1 : 0);
-            if (vx != 0 || vy != 0)
+            float vx = p.InX, vy = p.InY;
+            float len = MathF.Sqrt(vx * vx + vy * vy);
+            if (len > 0.01f)
             {
-                float len = MathF.Sqrt(vx * vx + vy * vy);
-                vx /= len; vy /= len;
+                if (len > 1f) { vx /= len; vy /= len; }  // never exceed unit speed
                 float speed = p.IsStalin ? StalinSpeed : RunnerSpeed;
                 MoveWithCollision(room, p, vx * speed * dt, vy * speed * dt);
             }
@@ -339,7 +338,7 @@ public class GameServer
         {
             p.IsStalin = false;
             p.Caught = false;
-            p.Up = p.Down = p.Left = p.Right = false;
+            p.InX = p.InY = 0;
         }
         _ = BroadcastLobby(room);
     }
@@ -391,6 +390,7 @@ public class GameServer
             name = p.Name,
             x = MathF.Round(p.X, 1),
             y = MathF.Round(p.Y, 1),
+            face = MathF.Round(p.Face, 3),
             stalin = p.IsStalin,
             caught = p.Caught
         }).ToList();
@@ -439,6 +439,6 @@ public class GameServer
         finally { p.SendLock.Release(); }
     }
 
-    private static bool GetBool(JsonElement root, string name)
-        => root.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.True;
+    private static double GetDouble(JsonElement root, string name)
+        => root.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.Number ? el.GetDouble() : 0;
 }

@@ -44,11 +44,18 @@
 
 <!-- GAME -->
 <div id="game" class="screen">
-  <canvas id="board"></canvas>
+  <div id="scene"></div>
+  <div id="crosshair">+</div>
   <div id="hud">
     <div id="role" class="role"></div>
     <div id="timer" class="timer">90</div>
     <div id="alive" class="alive"></div>
+  </div>
+  <div id="lockPrompt" class="bigoverlay hidden">
+    <div class="lockbox">
+      <div id="lockTitle">Click to play</div>
+      <div class="tag">Mouse = look &nbsp;·&nbsp; WASD = move &nbsp;·&nbsp; Esc = release mouse</div>
+    </div>
   </div>
   <div id="countdownOverlay" class="bigoverlay hidden"></div>
   <div id="gameoverOverlay" class="bigoverlay hidden">
@@ -56,9 +63,8 @@
     <button id="againBtn" class="big hidden">Back to Lobby</button>
     <div id="goSub" class="tag"></div>
   </div>
-  <div id="mobileHint" class="mobilehint">Use WASD or arrow keys to move</div>
 </div>
 
-<script src="game.js"></script>
+<script type="module" src="game.js"></script>
 </body>
 </html>

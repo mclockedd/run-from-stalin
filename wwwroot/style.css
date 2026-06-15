@@ -116,7 +116,17 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 #wheel { filter: drop-shadow(0 10px 30px rgba(0,0,0,.6)); }
 
 /* game */
-#board { display: block; background: #0e0b08; }
+#scene { position: absolute; inset: 0; }
+#scene canvas { display: block; }
+#crosshair {
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  color: rgba(255,255,255,.8); font-size: 22px; font-weight: 700;
+  pointer-events: none; text-shadow: 0 0 4px rgba(0,0,0,.8);
+}
+.lockbox { background: rgba(0,0,0,.65); padding: 28px 40px; border-radius: 14px; text-align: center; }
+#lockTitle { font-size: 30px; font-weight: 800; letter-spacing: 1px; margin-bottom: 8px; }
+#lockPrompt { cursor: pointer; }
 #hud {
   position: absolute;
   top: 0; left: 0; right: 0;
