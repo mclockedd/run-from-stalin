@@ -12,17 +12,55 @@ let myId = null;
 let isHost = false;
 let roomCode = "";
 let latest = null;          // last "state" message
-let lobbyPlayers = [];
+let lastCaughtCount = 0;
 
 const screens = {
   home: document.getElementById("home"),
-  lobby: document.getElementById("lobby"),
   wheel: document.getElementById("wheelScreen"),
   game: document.getElementById("game"),
 };
 function show(name) {
   for (const k in screens) screens[k].classList.toggle("active", k === name);
 }
+
+// ---- audio -----------------------------------------------------------------
+const Sound = {
+  lobby: new Audio("sounds/lobby-music.mp3"),
+  game: new Audio("sounds/game-music.mp3"),
+  kill: new Audio("sounds/kill.mp3"),
+  current: null,
+  ready: false,
+  muted: localStorage.getItem("rfs_muted") === "1",
+  init() {
+    this.lobby.loop = true; this.lobby.volume = 0.45;
+    this.game.loop = true;  this.game.volume = 0.45;
+    this.kill.volume = 0.8;
+  },
+  unlock() { this.ready = true; },          // call after a user gesture
+  play(name) {
+    const track = name === "game" ? this.game : this.lobby;
+    if (this.current === track) return;
+    if (this.current) this.current.pause();
+    this.current = track;
+    if (this.ready && !this.muted) track.play().catch(() => {});
+  },
+  playKill() {
+    if (this.muted || !this.ready) return;
+    try { const k = this.kill.cloneNode(); k.volume = 0.85; k.play().catch(() => {}); } catch {}
+  },
+  setMuted(m) {
+    this.muted = m;
+    localStorage.setItem("rfs_muted", m ? "1" : "0");
+    if (m) { this.lobby.pause(); this.game.pause(); }
+    else if (this.current) this.current.play().catch(() => {});
+    refreshMuteBtn();
+  },
+};
+Sound.init();
+const muteBtn = document.getElementById("muteBtn");
+function refreshMuteBtn() { muteBtn.textContent = Sound.muted ? "🔇" : "🔊"; }
+muteBtn.onclick = () => Sound.setMuted(!Sound.muted);
+refreshMuteBtn();
 
 // ---- networking ------------------------------------------------------------
 function connect(onOpenMsg) {
@@ -32,7 +70,8 @@ function connect(onOpenMsg) {
   ws.onmessage = (e) => handle(JSON.parse(e.data));
   ws.onclose = () => {
     if (myId) showHomeError("Disconnected from server.");
-    myId = null;
+    myId = null; latest = null;
+    Sound.play("lobby"); Sound.lobby.pause();
     show("home");
   };
 }
@@ -45,14 +84,9 @@ function handle(msg) {
     case "error": showHomeError(msg.message); break;
     case "joined":
       myId = msg.id; roomCode = msg.code; isHost = msg.isHost;
-      document.getElementById("codeDisplay").textContent = roomCode;
-      show("lobby");
-      break;
-    case "lobby":
-      lobbyPlayers = msg.players;
-      isHost = msg.hostId === myId;
-      renderLobby();
-      show("lobby");
+      document.getElementById("lobbyCodeVal").textContent = roomCode;
+      Sound.unlock(); Sound.play("lobby");
+      show("game");
       break;
     case "wheel": runWheel(msg.players, msg.winnerId); break;
     case "state": latest = msg; onState(msg); break;
@@ -79,32 +113,34 @@ document.getElementById("codeInput").addEventListener("keydown", (e) => {
   if (e.key === "Enter") document.getElementById("joinBtn").click();
 });
 
-// ---- lobby -----------------------------------------------------------------
-function renderLobby() {
-  const ul = document.getElementById("playerList");
+// ---- lobby HUD -------------------------------------------------------------
+document.getElementById("spinBtn").onclick = () => send({ type: "spin" });
+
+function renderLobbyHud(s) {
+  document.getElementById("lobbyCodeVal").textContent = s.code || roomCode;
+  const ul = document.getElementById("lobbyPlayers");
   ul.innerHTML = "";
-  lobbyPlayers.forEach((p) => {
+  for (const p of s.players) {
     const li = document.createElement("li");
     const nm = document.createElement("span");
     nm.textContent = p.name + (p.id === myId ? " (you)" : "");
     li.appendChild(nm);
-    if (p.isHost) { const h = document.createElement("span"); h.className = "host"; h.textContent = "HOST"; li.appendChild(h); }
+    if (p.id === s.hostId) { const h = document.createElement("span"); h.className = "host"; h.textContent = "HOST"; li.appendChild(h); }
     ul.appendChild(li);
-  });
+  }
   const spin = document.getElementById("spinBtn");
   const hint = document.getElementById("lobbyHint");
-  spin.style.display = isHost ? "block" : "none";
+  const enough = s.players.length >= 2;
+  spin.style.display = isHost ? "inline-block" : "none";
   if (isHost) {
-    const enough = lobbyPlayers.length >= 2;
     spin.disabled = !enough;
-    hint.textContent = enough ? "" : "Need at least 2 players to spin.";
+    hint.textContent = enough ? "or press E to spin" : "Need at least 2 players to spin.";
   } else {
     hint.textContent = "Waiting for the host to spin the wheel…";
   }
 }
-document.getElementById("spinBtn").onclick = () => send({ type: "spin" });
 
-// ---- the wheel (still 2D) --------------------------------------------------
+// ---- the wheel (2D overlay) ------------------------------------------------
 const wheelCanvas = document.getElementById("wheel");
 const wctx = wheelCanvas.getContext("2d");
 const WHEEL_COLORS = ["#c0392b", "#d4a017", "#27ae60", "#2980b9", "#8e44ad",
@@ -116,7 +152,8 @@ function runWheel(players, winnerId) {
   const seg = (Math.PI * 2) / n;
   const winnerIdx = players.findIndex((p) => p.id === winnerId);
   const targetMid = winnerIdx * seg + seg / 2;
-  const finalRot = (Math.PI * 2 * 6) + (-Math.PI / 2 - targetMid);
+  const turns = 5 + Math.floor(Math.random() * 4);     // vary the spin each time
+  const finalRot = (Math.PI * 2 * turns) + (-Math.PI / 2 - targetMid);
   const dur = 4200;
   const start = performance.now();
   function frame(now) {
@@ -174,9 +211,10 @@ scene.add(wallGroup);
 let builtWorldKey = "";
 
 function buildWorld(s) {
-  const key = s.world.w + "x" + s.world.h + ":" + (s.walls ? s.walls.length : 0);
-  if (key === builtWorldKey) return;
-  builtWorldKey = key;
+  const key = s.phase === "lobby" ? "lobby" : "game";
+  const fullKey = key + ":" + s.world.w + "x" + s.world.h + ":" + (s.walls ? s.walls.length : 0);
+  if (fullKey === builtWorldKey) return;
+  builtWorldKey = fullKey;
 
   if (floor) { scene.remove(floor); floor.geometry.dispose(); floor.material.dispose(); }
   const tex = makeGridTexture();
@@ -184,14 +222,14 @@ function buildWorld(s) {
   tex.repeat.set(s.world.w / 80, s.world.h / 80);
   floor = new THREE.Mesh(
     new THREE.PlaneGeometry(s.world.w, s.world.h),
-    new THREE.MeshStandardMaterial({ map: tex, color: 0x6b5a3f, roughness: 1 })
+    new THREE.MeshStandardMaterial({ map: tex, color: key === "lobby" ? 0x5a4a6a : 0x6b5a3f, roughness: 1 })
   );
   floor.rotation.x = -Math.PI / 2;
   floor.position.set(s.world.w / 2, 0, s.world.h / 2);
   scene.add(floor);
 
   wallGroup.clear();
-  const wallMat = new THREE.MeshStandardMaterial({ color: 0x5a4632, roughness: 0.9 });
+  const wallMat = new THREE.MeshStandardMaterial({ color: key === "lobby" ? 0x6a5340 : 0x5a4632, roughness: 0.9 });
   for (const w of s.walls || []) {
     const box = new THREE.Mesh(new THREE.BoxGeometry(w.w, WALL_H, w.h), wallMat);
     box.position.set(w.x + w.w / 2, WALL_H / 2, w.y + w.h / 2);
@@ -204,8 +242,7 @@ function makeGridTexture() {
   c.width = c.height = 64;
   const g = c.getContext("2d");
   g.fillStyle = "#241c14"; g.fillRect(0, 0, 64, 64);
-  g.strokeStyle = "#3a2d1e"; g.lineWidth = 2;
-  g.strokeRect(0, 0, 64, 64);
+  g.strokeStyle = "#3a2d1e"; g.lineWidth = 2; g.strokeRect(0, 0, 64, 64);
   return new THREE.CanvasTexture(c);
 }
 
@@ -215,29 +252,23 @@ function makeNameSprite(text) {
   const g = c.getContext("2d");
   g.font = "bold 30px Segoe UI, sans-serif";
   g.textAlign = "center"; g.textBaseline = "middle";
-  g.lineWidth = 6; g.strokeStyle = "rgba(0,0,0,.85)";
-  g.strokeText(text, 128, 32);
-  g.fillStyle = "#f3e9d8";
-  g.fillText(text, 128, 32);
+  g.lineWidth = 6; g.strokeStyle = "rgba(0,0,0,.85)"; g.strokeText(text, 128, 32);
+  g.fillStyle = "#f3e9d8"; g.fillText(text, 128, 32);
   const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: true }));
   spr.scale.set(120, 30, 1);
   return spr;
 }
 
-// player avatars keyed by id
-const avatars = new Map();   // id -> { group, body, head, label, render:{x,y,face} }
+const avatars = new Map();
 
 function makeAvatar(p) {
   const group = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({ color: 0xd4a017, roughness: 0.6 });
   const body = new THREE.Mesh(new THREE.CapsuleGeometry(PLAYER_R, BODY_H - PLAYER_R * 2, 4, 10), mat);
   body.position.y = BODY_H / 2;
-  const head = new THREE.Mesh(
-    new THREE.SphereGeometry(PLAYER_R * 0.7, 12, 10),
-    new THREE.MeshStandardMaterial({ color: 0xf0c27a, roughness: 0.6 })
-  );
+  const head = new THREE.Mesh(new THREE.SphereGeometry(PLAYER_R * 0.7, 12, 10),
+    new THREE.MeshStandardMaterial({ color: 0xf0c27a, roughness: 0.6 }));
   head.position.y = BODY_H + 4;
-  // little nose so you can read facing direction
   const nose = new THREE.Mesh(new THREE.ConeGeometry(5, 14, 8), new THREE.MeshStandardMaterial({ color: 0x222 }));
   nose.rotation.x = Math.PI / 2;
   nose.position.set(0, BODY_H + 4, -PLAYER_R * 0.7 - 4);
@@ -253,13 +284,19 @@ let yaw = 0, pitch = 0;
 let locked = false;
 const pressed = new Set();
 const sensitivity = 0.0022;
+const MOVE_KEYS = ["KeyW","KeyA","KeyS","KeyD","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"];
+
+function typing() {
+  const el = document.activeElement;
+  return el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+}
+function canMoveNow() {
+  return latest && (latest.phase === "lobby" || latest.phase === "playing");
+}
 
 renderer.domElement.addEventListener("click", () => {
-  if (latest && (latest.phase === "playing" || latest.phase === "countdown"))
-    renderer.domElement.requestPointerLock();
+  if (canMoveNow() || (latest && latest.phase === "countdown")) renderer.domElement.requestPointerLock();
 });
-document.getElementById("lockPrompt").addEventListener("click", () => renderer.domElement.requestPointerLock());
-
 document.addEventListener("pointerlockchange", () => {
   locked = document.pointerLockElement === renderer.domElement;
   updateLockPrompt();
@@ -271,8 +308,10 @@ document.addEventListener("mousemove", (e) => {
   pitch = Math.max(-1.2, Math.min(1.2, pitch));
 });
 window.addEventListener("keydown", (e) => {
-  if (["KeyW","KeyA","KeyS","KeyD","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.code)) {
-    e.preventDefault(); pressed.add(e.code);
+  if (typing()) return;                              // let people type their name/code
+  if (MOVE_KEYS.includes(e.code)) { e.preventDefault(); pressed.add(e.code); }
+  if (e.code === "KeyE" && isHost && latest && latest.phase === "lobby" && latest.players.length >= 2) {
+    send({ type: "spin" });
   }
 });
 window.addEventListener("keyup", (e) => pressed.delete(e.code));
@@ -280,20 +319,63 @@ window.addEventListener("blur", () => pressed.clear());
 
 function updateLockPrompt() {
   const p = document.getElementById("lockPrompt");
-  const inGame = latest && (latest.phase === "playing" || latest.phase === "countdown" || latest.phase === "gameover");
-  const me = latest && latest.players.find((x) => x.id === myId);
-  const show = inGame && !locked && !(latest.phase === "gameover") && !(me && me.caught && false);
-  p.classList.toggle("hidden", !show);
+  const inWorld = latest && ["lobby", "playing", "countdown"].includes(latest.phase);
+  p.classList.toggle("hidden", !(inWorld && !locked));
   document.getElementById("lockTitle").textContent =
+    latest && latest.phase === "lobby" ? "Click to look around" :
     latest && latest.phase === "countdown" ? "Get ready…" : "Click to play";
 }
 
 // ---- HUD / overlays from state ---------------------------------------------
 function onState(msg) {
-  if (msg.phase === "lobby") { document.exitPointerLock?.(); show("lobby"); return; }
   show("game");
   onResize();
 
+  const lobby = msg.phase === "lobby";
+  document.getElementById("lobbyHud").classList.toggle("hidden", !lobby);
+  document.getElementById("hud").style.display = lobby ? "none" : "flex";
+
+  // audio per phase
+  if (lobby || msg.phase === "gameover") Sound.play("lobby");
+  else Sound.play("game");
+
+  if (lobby) {
+    isHost = msg.hostId === myId;
+    renderLobbyHud(msg);
+    lastCaughtCount = 0;
+  } else {
+    isHost = msg.hostId === myId;
+    updateRoundHud(msg);
+  }
+
+  // countdown overlay
+  const co = document.getElementById("countdownOverlay");
+  if (msg.phase === "countdown") { co.classList.remove("hidden"); co.textContent = msg.countdown > 0 ? msg.countdown : "GO!"; }
+  else co.classList.add("hidden");
+
+  // gameover overlay
+  const go = document.getElementById("gameoverOverlay");
+  if (msg.phase === "gameover") {
+    document.exitPointerLock?.();
+    go.classList.remove("hidden");
+    const t = document.getElementById("goText");
+    if (msg.winner === "stalin") { t.textContent = `${msg.stalinName} caught everyone!`; t.className = "stalin"; }
+    else { t.textContent = "The runners survived!"; t.className = "runners"; }
+    document.getElementById("goSub").textContent = "Returning to lobby…";
+    document.getElementById("againBtn").classList.toggle("hidden", !isHost);
+  } else go.classList.add("hidden");
+
+  syncAvatars(msg);
+  updateLockPrompt();
+
+  // Safeguard: if requestAnimationFrame is being throttled (background tab,
+  // some headless contexts), draw on the incoming state so the world still
+  // shows. When rAF is healthy this is a no-op.
+  if (performance.now() - lastRafRender > 100) renderScene(0);
+}
+document.getElementById("againBtn").onclick = () => send({ type: "restart" });
+
+function updateRoundHud(msg) {
   const me = msg.players.find((p) => p.id === myId);
   const roleEl = document.getElementById("role");
   if (me) {
@@ -309,25 +391,13 @@ function onState(msg) {
   const runnersAlive = msg.players.filter((p) => !p.stalin && !p.caught).length;
   document.getElementById("alive").textContent = `Runners left: ${runnersAlive} / ${runnersTotal}`;
 
-  const co = document.getElementById("countdownOverlay");
-  if (msg.phase === "countdown") { co.classList.remove("hidden"); co.textContent = msg.countdown > 0 ? msg.countdown : "GO!"; }
-  else co.classList.add("hidden");
-
-  const go = document.getElementById("gameoverOverlay");
-  if (msg.phase === "gameover") {
-    document.exitPointerLock?.();
-    go.classList.remove("hidden");
-    const t = document.getElementById("goText");
-    if (msg.winner === "stalin") { t.textContent = `${msg.stalinName} caught everyone!`; t.className = "stalin"; }
-    else { t.textContent = "The runners survived!"; t.className = "runners"; }
-    document.getElementById("goSub").textContent = "Returning to lobby…";
-    document.getElementById("againBtn").classList.toggle("hidden", !isHost);
-  } else go.classList.add("hidden");
-
-  syncAvatars(msg);
-  updateLockPrompt();
+  // kill sound when the caught count grows during play
+  if (msg.phase === "playing") {
+    const caught = msg.players.filter((p) => p.caught).length;
+    if (caught > lastCaughtCount) Sound.playKill();
+    lastCaughtCount = caught;
+  }
 }
-document.getElementById("againBtn").onclick = () => send({ type: "restart" });
 
 function syncAvatars(msg) {
   const seen = new Set();
@@ -335,8 +405,8 @@ function syncAvatars(msg) {
     seen.add(p.id);
     let a = avatars.get(p.id);
     if (!a) { a = makeAvatar(p); avatars.set(p.id, a); }
-    a.target = p;                       // server truth, lerped each frame
-    a.group.visible = p.id !== myId;    // don't render own body in first person
+    a.target = p;
+    a.group.visible = p.id !== myId;             // hide own body in first person
     const col = p.stalin ? 0xc0392b : (p.caught ? 0x666666 : 0xd4a017);
     a.body.material.color.setHex(col);
     a.body.material.opacity = p.caught ? 0.45 : 1;
@@ -351,13 +421,12 @@ function syncAvatars(msg) {
 // ---- input send loop -------------------------------------------------------
 let sendAccum = 0;
 function sendInput(dt) {
-  if (!latest || latest.phase !== "playing") return;
+  if (!canMoveNow()) return;
   sendAccum += dt;
-  if (sendAccum < 0.04) return;        // ~25 Hz
+  if (sendAccum < 0.04) return;
   sendAccum = 0;
   const f = (pressed.has("KeyW") || pressed.has("ArrowUp") ? 1 : 0) - (pressed.has("KeyS") || pressed.has("ArrowDown") ? 1 : 0);
   const r = (pressed.has("KeyD") || pressed.has("ArrowRight") ? 1 : 0) - (pressed.has("KeyA") || pressed.has("ArrowLeft") ? 1 : 0);
-  // forward / right on the ground plane from current yaw
   const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
   const rx = Math.cos(yaw), rz = -Math.sin(yaw);
   let mx = fx * f + rx * r;
@@ -369,17 +438,14 @@ function sendInput(dt) {
 
 // ---- render loop -----------------------------------------------------------
 let lastT = performance.now();
-function frame(now) {
-  requestAnimationFrame(frame);
-  const dt = Math.min(0.05, (now - lastT) / 1000);
-  lastT = now;
+let lastRafRender = 0;
 
-  if (!latest || !["playing", "countdown", "gameover"].includes(latest.phase)) return;
+function renderScene(dt) {
+  if (!latest || !["lobby", "playing", "countdown", "gameover"].includes(latest.phase)) return;
 
   buildWorld(latest);
   sendInput(dt);
 
-  // interpolate avatars toward server positions
   const k = Math.min(1, dt * 14);
   for (const a of avatars.values()) {
     if (!a.target) continue;
@@ -390,17 +456,21 @@ function frame(now) {
     a.group.rotation.y = -a.render.face;
   }
 
-  // place camera at my avatar's eyes
   const me = avatars.get(myId);
-  if (me) {
-    camera.position.set(me.render.x, EYE_H, me.render.y);
-  } else {
-    camera.position.set(latest.world.w / 2, 300, latest.world.h / 2);
-  }
+  if (me) camera.position.set(me.render.x, EYE_H, me.render.y);
+  else camera.position.set(latest.world.w / 2, 300, latest.world.h / 2);
   camera.rotation.y = yaw;
   camera.rotation.x = pitch;
 
   renderer.render(scene, camera);
+}
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.05, (now - lastT) / 1000);
+  lastT = now;
+  lastRafRender = now;
+  renderScene(dt);
 }
 requestAnimationFrame(frame);
 

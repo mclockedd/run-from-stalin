@@ -34,42 +34,66 @@ public class Room
 
     public float WheelTimer;
     public string WheelWinnerId = "";
+    public string LastStalinId = "";   // to avoid picking the same Stalin twice in a row
     public float Countdown;
     public float TimeLeft;
     public float GameOverTimer;
     public string Winner = "";       // "stalin" | "runners"
     public string StalinName = "";
 
+    // game arena
     public const float WorldW = 1800;
     public const float WorldH = 1200;
-    public List<Wall> Walls = new();
+    public List<Wall> GameWalls = new();
+
+    // lobby room
+    public const float LobbyW = 1100;
+    public const float LobbyH = 800;
+    public List<Wall> LobbyWalls = new();
+
+    // which map is active right now
+    public float ActiveW => Phase == "lobby" ? LobbyW : WorldW;
+    public float ActiveH => Phase == "lobby" ? LobbyH : WorldH;
+    public List<Wall> ActiveWalls => Phase == "lobby" ? LobbyWalls : GameWalls;
 
     public Room()
     {
-        BuildMap();
+        BuildGameMap();
+        BuildLobbyMap();
     }
 
-    private void BuildMap()
+    private void BuildGameMap()
     {
-        Walls.Clear();
-        // Border walls
+        GameWalls.Clear();
         float t = 30;
-        Walls.Add(new Wall(0, 0, WorldW, t));
-        Walls.Add(new Wall(0, WorldH - t, WorldW, t));
-        Walls.Add(new Wall(0, 0, t, WorldH));
-        Walls.Add(new Wall(WorldW - t, 0, t, WorldH));
+        GameWalls.Add(new Wall(0, 0, WorldW, t));
+        GameWalls.Add(new Wall(0, WorldH - t, WorldW, t));
+        GameWalls.Add(new Wall(0, 0, t, WorldH));
+        GameWalls.Add(new Wall(WorldW - t, 0, t, WorldH));
         // Interior "buildings" — gives runners things to dodge behind.
-        Walls.Add(new Wall(250, 200, 260, 120));
-        Walls.Add(new Wall(700, 150, 120, 300));
-        Walls.Add(new Wall(1100, 250, 300, 100));
-        Walls.Add(new Wall(1500, 450, 120, 320));
-        Walls.Add(new Wall(300, 550, 120, 350));
-        Walls.Add(new Wall(600, 650, 320, 110));
-        Walls.Add(new Wall(1050, 600, 130, 130));
-        Walls.Add(new Wall(1300, 850, 280, 120));
-        Walls.Add(new Wall(250, 980, 350, 110));
-        Walls.Add(new Wall(750, 920, 120, 200));
-        Walls.Add(new Wall(1000, 950, 180, 90));
+        GameWalls.Add(new Wall(250, 200, 260, 120));
+        GameWalls.Add(new Wall(700, 150, 120, 300));
+        GameWalls.Add(new Wall(1100, 250, 300, 100));
+        GameWalls.Add(new Wall(1500, 450, 120, 320));
+        GameWalls.Add(new Wall(300, 550, 120, 350));
+        GameWalls.Add(new Wall(600, 650, 320, 110));
+        GameWalls.Add(new Wall(1050, 600, 130, 130));
+        GameWalls.Add(new Wall(1300, 850, 280, 120));
+        GameWalls.Add(new Wall(250, 980, 350, 110));
+        GameWalls.Add(new Wall(750, 920, 120, 200));
+        GameWalls.Add(new Wall(1000, 950, 180, 90));
+    }
+
+    private void BuildLobbyMap()
+    {
+        LobbyWalls.Clear();
+        float t = 30;
+        LobbyWalls.Add(new Wall(0, 0, LobbyW, t));
+        LobbyWalls.Add(new Wall(0, LobbyH - t, LobbyW, t));
+        LobbyWalls.Add(new Wall(0, 0, t, LobbyH));
+        LobbyWalls.Add(new Wall(LobbyW - t, 0, t, LobbyH));
+        // central pedestal (where the wheel "stands")
+        LobbyWalls.Add(new Wall(LobbyW / 2 - 70, LobbyH / 2 - 70, 140, 140));
     }
 }
 
@@ -146,17 +170,10 @@ public class GameServer
                 player.Connected = false;
                 room.Players.TryRemove(player.Id, out _);
                 if (room.Players.IsEmpty)
-                {
                     _rooms.TryRemove(room.Code, out _);
-                }
-                else
-                {
-                    // Reassign host if needed.
-                    if (room.HostId == player.Id)
-                        room.HostId = room.Players.Keys.First();
-                    if (room.Phase == "lobby")
-                        await BroadcastLobby(room);
-                }
+                else if (room.HostId == player.Id)
+                    room.HostId = room.Players.Keys.First();
+                // state is rebroadcast every tick, so no explicit roster push needed
             }
         }
     }
@@ -193,10 +210,22 @@ public class GameServer
         var player = new Player { Name = name, Socket = socket };
         if (room.Players.IsEmpty) room.HostId = player.Id;
         room.Players[player.Id] = player;
+        PlaceInLobby(room, player);
 
         await SendRaw(socket, new { type = "joined", id = player.Id, code = room.Code, isHost = room.HostId == player.Id });
-        await BroadcastLobby(room);
         return (room, player);
+    }
+
+    private void PlaceInLobby(Room room, Player p)
+    {
+        // spawn around the lower part of the room, facing the central pedestal
+        int idx = room.Players.Count;
+        double ang = idx * 1.1;
+        p.X = (float)(Room.LobbyW / 2 + Math.Cos(ang) * 280);
+        p.Y = (float)(Room.LobbyH / 2 + 230 + Math.Sin(ang) * 60);
+        p.X = Math.Clamp(p.X, 80, Room.LobbyW - 80);
+        p.Y = Math.Clamp(p.Y, 80, Room.LobbyH - 80);
+        p.InX = p.InY = 0;
     }
 
     private string NewCode()
@@ -219,11 +248,20 @@ public class GameServer
         if (room.Players.Count < 2) return;
 
         var ids = room.Players.Keys.ToList();
-        room.WheelWinnerId = ids[Random.Shared.Next(ids.Count)];
+        // Pick uniformly at random, but avoid repeating the previous Stalin when
+        // there's more than one candidate — keeps it feeling fair and fresh.
+        var pool = ids.Count > 2 && ids.Contains(room.LastStalinId)
+            ? ids.Where(id => id != room.LastStalinId).ToList()
+            : ids;
+        room.WheelWinnerId = pool[Random.Shared.Next(pool.Count)];
         room.Phase = "wheel";
         room.WheelTimer = 4.5f;
 
-        var entries = room.Players.Values.Select(p => new { id = p.Id, name = p.Name }).ToList();
+        // Send players in a freshly shuffled order so the wheel layout varies each spin.
+        var entries = room.Players.Values
+            .OrderBy(_ => Random.Shared.Next())
+            .Select(p => new { id = p.Id, name = p.Name })
+            .ToList();
         _ = Broadcast(room, new { type = "wheel", winnerId = room.WheelWinnerId, players = entries });
     }
 
@@ -236,6 +274,10 @@ public class GameServer
         {
             switch (room.Phase)
             {
+                case "lobby":
+                    MoveEveryone(room, dt);
+                    _ = BroadcastState(room);
+                    break;
                 case "wheel":
                     room.WheelTimer -= dt;
                     if (room.WheelTimer <= 0) StartRound(room);
@@ -267,7 +309,7 @@ public class GameServer
             p.Caught = false;
             p.InX = p.InY = 0;
         }
-        // Stalin spawns centre, runners spread around the edges.
+        room.LastStalinId = room.WheelWinnerId;
         var stalin = players.FirstOrDefault(p => p.IsStalin);
         if (stalin != null) { stalin.X = Room.WorldW / 2; stalin.Y = Room.WorldH / 2; }
         var runners = players.Where(p => !p.IsStalin).ToList();
@@ -285,6 +327,13 @@ public class GameServer
         room.Phase = "countdown";
     }
 
+    // Free walking with no game rules (used in the lobby).
+    private void MoveEveryone(Room room, float dt)
+    {
+        foreach (var p in room.Players.Values)
+            ApplyMovement(room, p, dt, RunnerSpeed);
+    }
+
     private void UpdatePlaying(Room room, float dt)
     {
         room.TimeLeft -= dt;
@@ -292,17 +341,9 @@ public class GameServer
         foreach (var p in room.Players.Values)
         {
             if (p.Caught) continue;
-            float vx = p.InX, vy = p.InY;
-            float len = MathF.Sqrt(vx * vx + vy * vy);
-            if (len > 0.01f)
-            {
-                if (len > 1f) { vx /= len; vy /= len; }  // never exceed unit speed
-                float speed = p.IsStalin ? StalinSpeed : RunnerSpeed;
-                MoveWithCollision(room, p, vx * speed * dt, vy * speed * dt);
-            }
+            ApplyMovement(room, p, dt, p.IsStalin ? StalinSpeed : RunnerSpeed);
         }
 
-        // Catch detection.
         var stalin = room.Players.Values.FirstOrDefault(p => p.IsStalin && !p.Caught);
         if (stalin != null)
         {
@@ -315,12 +356,20 @@ public class GameServer
             }
         }
 
-        // Win checks.
         bool anyRunnerFree = room.Players.Values.Any(p => !p.IsStalin && !p.Caught);
         if (!anyRunnerFree && room.Players.Values.Any(p => !p.IsStalin))
             EndRound(room, "stalin");
         else if (room.TimeLeft <= 0)
             EndRound(room, "runners");
+    }
+
+    private void ApplyMovement(Room room, Player p, float dt, float speed)
+    {
+        float vx = p.InX, vy = p.InY;
+        float len = MathF.Sqrt(vx * vx + vy * vy);
+        if (len <= 0.01f) return;
+        if (len > 1f) { vx /= len; vy /= len; }
+        MoveWithCollision(room, p, vx * speed * dt, vy * speed * dt);
     }
 
     private void EndRound(Room room, string winner)
@@ -338,33 +387,32 @@ public class GameServer
         {
             p.IsStalin = false;
             p.Caught = false;
-            p.InX = p.InY = 0;
+            PlaceInLobby(room, p);
         }
-        _ = BroadcastLobby(room);
     }
 
-    // ---- collision -----------------------------------------------------------
+    // ---- collision (operates on the active map) ------------------------------
 
     private void MoveWithCollision(Room room, Player p, float dx, float dy)
     {
+        var walls = room.ActiveWalls;
         p.X += dx;
-        ResolveAxis(room, p, true);
+        ResolveAxis(walls, p, true);
         p.Y += dy;
-        ResolveAxis(room, p, false);
-        p.X = Math.Clamp(p.X, Radius, Room.WorldW - Radius);
-        p.Y = Math.Clamp(p.Y, Radius, Room.WorldH - Radius);
+        ResolveAxis(walls, p, false);
+        p.X = Math.Clamp(p.X, Radius, room.ActiveW - Radius);
+        p.Y = Math.Clamp(p.Y, Radius, room.ActiveH - Radius);
     }
 
-    private void ResolveAxis(Room room, Player p, bool xAxis)
+    private void ResolveAxis(List<Wall> walls, Player p, bool xAxis)
     {
-        foreach (var w in room.Walls)
+        foreach (var w in walls)
         {
             float closestX = Math.Clamp(p.X, w.X, w.X + w.W);
             float closestY = Math.Clamp(p.Y, w.Y, w.Y + w.H);
             float dx = p.X - closestX, dy = p.Y - closestY;
             if (dx * dx + dy * dy >= Radius * Radius) continue;
 
-            // Push out along the axis we just moved.
             if (xAxis)
                 p.X = (p.X < w.X + w.W / 2) ? w.X - Radius : w.X + w.W + Radius;
             else
@@ -373,14 +421,6 @@ public class GameServer
     }
 
     // ---- broadcasting --------------------------------------------------------
-
-    private Task BroadcastLobby(Room room)
-    {
-        var players = room.Players.Values
-            .Select(p => new { id = p.Id, name = p.Name, isHost = room.HostId == p.Id })
-            .ToList();
-        return Broadcast(room, new { type = "lobby", code = room.Code, hostId = room.HostId, phase = room.Phase, players });
-    }
 
     private Task BroadcastState(Room room)
     {
@@ -399,12 +439,14 @@ public class GameServer
         {
             type = "state",
             phase = room.Phase,
+            code = room.Code,
+            hostId = room.HostId,
             timeLeft = MathF.Max(0, MathF.Round(room.TimeLeft, 1)),
             countdown = MathF.Ceiling(MathF.Max(0, room.Countdown)),
             winner = room.Winner,
             stalinName = room.StalinName,
-            world = new { w = Room.WorldW, h = Room.WorldH },
-            walls = room.Walls.Select(w => new { x = w.X, y = w.Y, w = w.W, h = w.H }),
+            world = new { w = room.ActiveW, h = room.ActiveH },
+            walls = room.ActiveWalls.Select(w => new { x = w.X, y = w.Y, w = w.W, h = w.H }),
             players
         };
         return Broadcast(room, msg);
@@ -420,10 +462,7 @@ public class GameServer
     private async Task SendRaw(WebSocket socket, object payload)
     {
         var json = JsonSerializer.SerializeToUtf8Bytes(payload, JsonOpts);
-        try
-        {
-            await socket.SendAsync(json, WebSocketMessageType.Text, true, CancellationToken.None);
-        }
+        try { await socket.SendAsync(json, WebSocketMessageType.Text, true, CancellationToken.None); }
         catch { }
     }
 
@@ -431,10 +470,7 @@ public class GameServer
     {
         if (p.Socket.State != WebSocketState.Open) return;
         await p.SendLock.WaitAsync();
-        try
-        {
-            await p.Socket.SendAsync(json, WebSocketMessageType.Text, true, CancellationToken.None);
-        }
+        try { await p.Socket.SendAsync(json, WebSocketMessageType.Text, true, CancellationToken.None); }
         catch { }
         finally { p.SendLock.Release(); }
     }

@@ -24,36 +24,39 @@
   </div>
 </div>
 
-<!-- LOBBY -->
-<div id="lobby" class="screen">
-  <div class="panel">
-    <h2>Party Code</h2>
-    <div id="codeDisplay" class="code">----</div>
-    <p class="tag">Share this code with friends on the same network.</p>
-    <ul id="playerList" class="players"></ul>
-    <button id="spinBtn" class="big">Spin the Wheel</button>
-    <p id="lobbyHint" class="tag"></p>
-  </div>
-</div>
-
 <!-- WHEEL -->
 <div id="wheelScreen" class="screen">
   <h2 id="wheelTitle">Choosing Stalin…</h2>
   <canvas id="wheel" width="420" height="420"></canvas>
 </div>
 
-<!-- GAME -->
+<!-- GAME + 3D LOBBY -->
 <div id="game" class="screen">
   <div id="scene"></div>
   <div id="crosshair">+</div>
+
+  <!-- in-round HUD -->
   <div id="hud">
     <div id="role" class="role"></div>
     <div id="timer" class="timer">90</div>
     <div id="alive" class="alive"></div>
   </div>
+
+  <!-- lobby HUD (shown while phase = lobby) -->
+  <div id="lobbyHud" class="hidden">
+    <div id="lobbyCode">PARTY <span id="lobbyCodeVal">----</span></div>
+    <ul id="lobbyPlayers" class="players"></ul>
+    <div id="lobbyBottom">
+      <button id="spinBtn" class="big">Spin the Wheel</button>
+      <div id="lobbyHint" class="tag"></div>
+    </div>
+  </div>
+
+  <button id="muteBtn" title="Mute / unmute">🔊</button>
+
   <div id="lockPrompt" class="bigoverlay hidden">
     <div class="lockbox">
-      <div id="lockTitle">Click to play</div>
+      <div id="lockTitle">Click to look around</div>
       <div class="tag">Mouse = look &nbsp;·&nbsp; WASD = move &nbsp;·&nbsp; Esc = release mouse</div>
     </div>
   </div>
