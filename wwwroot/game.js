@@ -5,6 +5,9 @@ const PLAYER_R = 18;
 const EYE_H = 34;
 const WALL_H = 95;
 const BODY_H = 52;
+const SPEED_RUN = 230;      // must match the server
+const SPEED_STALIN = 255;
+let selfPos = null;         // client-predicted position of the local player
 
 // ---- state -----------------------------------------------------------------
 let ws;
@@ -77,7 +80,7 @@ function connect(onOpenMsg) {
   ws.onmessage = (e) => handle(JSON.parse(e.data));
   ws.onclose = () => {
     if (myId) showHomeError("Disconnected from server.");
-    myId = null; latest = null;
+    myId = null; latest = null; selfPos = null;
     if (Sound.current) Sound.current.pause();
     Sound.mode = null;
     showPause(false);
@@ -92,7 +95,7 @@ function handle(msg) {
   switch (msg.type) {
     case "error": showHomeError(msg.message); break;
     case "joined":
-      myId = msg.id; roomCode = msg.code; isHost = msg.isHost;
+      myId = msg.id; roomCode = msg.code; isHost = msg.isHost; selfPos = null;
       document.getElementById("lobbyCodeVal").textContent = roomCode;
       Sound.unlock(); ensureAudioCtx(); Sound.setMode("lobby");
       show("game");
@@ -544,9 +547,10 @@ function renderScene(dt) {
   buildWorld(latest);
   sendInput(dt);
 
+  // Remote players: smooth interpolation toward the latest server state.
   const k = Math.min(1, dt * 14);
   for (const a of avatars.values()) {
-    if (!a.target) continue;
+    if (!a.target || a.target.id === myId) continue;   // local player is predicted below
     a.render.x += (a.target.x - a.render.x) * k;
     a.render.y += (a.target.y - a.render.y) * k;
     a.render.face = lerpAngle(a.render.face, a.target.face || 0, k);
@@ -554,8 +558,16 @@ function renderScene(dt) {
     a.group.rotation.y = -a.render.face;
   }
 
-  const me = avatars.get(myId);
-  if (me) camera.position.set(me.render.x, EYE_H, me.render.y);
+  // Local player: client-side prediction (instant, no 30Hz stutter).
+  predictSelf(dt);
+  const myAv = avatars.get(myId);
+  if (selfPos && myAv) {
+    myAv.render.x = selfPos.x; myAv.render.y = selfPos.y;
+    myAv.group.position.set(selfPos.x, 0, selfPos.y);
+    myAv.group.rotation.y = -yaw;
+  }
+
+  if (selfPos) camera.position.set(selfPos.x, EYE_H, selfPos.y);
   else camera.position.set(latest.world.w / 2, 300, latest.world.h / 2);
   camera.rotation.y = yaw;
   camera.rotation.x = pitch;
@@ -563,6 +575,51 @@ function renderScene(dt) {
   renderer.render(scene, camera);
   drawRadar();
   updateWalkSound();
+}
+
+// Predict the local player from input each frame, then softly correct toward
+// the authoritative server position (handles collisions, catches, spawns).
+function predictSelf(dt) {
+  const me = latest.players.find((p) => p.id === myId);
+  if (!me) { selfPos = null; return; }
+  if (!selfPos) { selfPos = { x: me.x, y: me.y }; return; }
+
+  const canWalk = dt > 0 && !me.caught && (latest.phase === "playing" || latest.phase === "lobby");
+  if (canWalk) {
+    const f = (pressed.has("KeyW") || pressed.has("ArrowUp") ? 1 : 0) - (pressed.has("KeyS") || pressed.has("ArrowDown") ? 1 : 0);
+    const r = (pressed.has("KeyD") || pressed.has("ArrowRight") ? 1 : 0) - (pressed.has("KeyA") || pressed.has("ArrowLeft") ? 1 : 0);
+    if (f || r) {
+      const fx = -Math.sin(yaw), fz = -Math.cos(yaw), rx = Math.cos(yaw), rz = -Math.sin(yaw);
+      let mx = fx * f + rx * r, my = fz * f + rz * r;
+      const len = Math.hypot(mx, my); if (len > 1) { mx /= len; my /= len; }
+      const speed = me.stalin ? SPEED_STALIN : SPEED_RUN;
+      clientMove(selfPos, mx * speed * dt, my * speed * dt);
+    }
+  }
+
+  // reconcile: snap on big jumps (spawn/teleport), otherwise gently pull to truth
+  const ddx = me.x - selfPos.x, ddy = me.y - selfPos.y;
+  if (ddx * ddx + ddy * ddy > 250 * 250) { selfPos.x = me.x; selfPos.y = me.y; }
+  else { const c = Math.min(1, dt * 10); selfPos.x += ddx * c; selfPos.y += ddy * c; }
+}
+
+// Client-side copy of the server's circle-vs-rect collision (must match).
+function clientMove(pos, dx, dy) {
+  const walls = latest.walls || [], W = latest.world.w, H = latest.world.h, R = PLAYER_R;
+  pos.x += dx; resolveAxisC(pos, walls, true, R);
+  pos.y += dy; resolveAxisC(pos, walls, false, R);
+  pos.x = Math.max(R, Math.min(W - R, pos.x));
+  pos.y = Math.max(R, Math.min(H - R, pos.y));
+}
+function resolveAxisC(pos, walls, xAxis, R) {
+  for (const w of walls) {
+    const cx = Math.max(w.x, Math.min(pos.x, w.x + w.w));
+    const cy = Math.max(w.y, Math.min(pos.y, w.y + w.h));
+    const dx = pos.x - cx, dy = pos.y - cy;
+    if (dx * dx + dy * dy >= R * R) continue;
+    if (xAxis) pos.x = (pos.x < w.x + w.w / 2) ? w.x - R : w.x + w.w + R;
+    else pos.y = (pos.y < w.y + w.h / 2) ? w.y - R : w.y + w.h + R;
+  }
 }
 
 function frame(now) {
