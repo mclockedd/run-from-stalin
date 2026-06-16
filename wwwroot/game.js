@@ -310,43 +310,83 @@ function buildWorld(s) {
   builtWorldKey = key;
 
   if (floor) { scene.remove(floor); floor.geometry.dispose(); floor.material.map?.dispose(); floor.material.dispose(); }
-  const tex = makeGridTexture();
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(s.world.w / 80, s.world.h / 80);
+  const ftex = floorBaseTex.clone(); ftex.needsUpdate = true;
+  ftex.wrapS = ftex.wrapT = THREE.RepeatWrapping;
+  ftex.repeat.set(s.world.w / 300, s.world.h / 300);
   floor = new THREE.Mesh(
     new THREE.PlaneGeometry(s.world.w, s.world.h),
-    new THREE.MeshStandardMaterial({ map: tex, color: isLobby ? 0x5a4a6a : 0x6b5a3f, roughness: 1 })
+    new THREE.MeshStandardMaterial({ map: ftex, color: isLobby ? 0x6a5a7a : 0x7d6a48, roughness: 1 })
   );
   floor.rotation.x = -Math.PI / 2;
   floor.position.set(s.world.w / 2, 0, s.world.h / 2);
   scene.add(floor);
 
-  // dispose old wall meshes
-  for (const c of wallGroup.children) { c.geometry.dispose(); c.material.dispose(); }
+  // dispose old wall meshes + their textures
+  for (const c of wallGroup.children) { c.geometry.dispose(); c.material.map?.dispose(); c.material.dispose(); }
   wallGroup.clear();
 
-  const palette = isLobby ? [0x6a5340] : [0x6e5236, 0x5a4632, 0x77603f, 0x504738, 0x6b4a3a];
+  const palette = isLobby ? [0x8a7560] : [0x9c7a52, 0x86684a, 0xa6885c, 0x756853, 0x97705a];
   for (const w of s.walls || []) {
     const isBorder = w.w >= s.world.w - 1 || w.h >= s.world.h - 1;
     // deterministic per-building variety from its position
     const seed = Math.abs(Math.sin(w.x * 12.9898 + w.y * 78.233)) % 1;
     const h = isBorder ? WALL_H : 90 + Math.floor(seed * 95);
     const col = palette[Math.floor(seed * 997) % palette.length];
-    const mat = new THREE.MeshStandardMaterial({ color: col, roughness: 0.92 });
+    const wtex = wallBaseTex.clone(); wtex.needsUpdate = true;
+    wtex.wrapS = wtex.wrapT = THREE.RepeatWrapping;
+    wtex.repeat.set(Math.max(1, Math.round(w.w / 150)), Math.max(1, Math.round(h / 95)));
+    const mat = new THREE.MeshStandardMaterial({ map: wtex, color: col, roughness: 0.95 });
     const box = new THREE.Mesh(new THREE.BoxGeometry(w.w, h, w.h), mat);
     box.position.set(w.x + w.w / 2, h / 2, w.y + w.h / 2);
     wallGroup.add(box);
   }
 }
 
-function makeGridTexture() {
+// Procedural brick/panel texture (grayscale → tinted by the material color).
+function makeWallTexture() {
   const c = document.createElement("canvas");
-  c.width = c.height = 64;
+  c.width = c.height = 256;
   const g = c.getContext("2d");
-  g.fillStyle = "#241c14"; g.fillRect(0, 0, 64, 64);
-  g.strokeStyle = "#3a2d1e"; g.lineWidth = 2; g.strokeRect(0, 0, 64, 64);
+  g.fillStyle = "#b8b8b8"; g.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 3000; i++) {           // grain
+    const v = (170 + Math.random() * 70) | 0;
+    g.fillStyle = `rgba(${v},${v},${v},${Math.random() * 0.18})`;
+    g.fillRect(Math.random() * 256, Math.random() * 256, 2, 2);
+  }
+  const bh = 36, bw = 64;
+  g.strokeStyle = "rgba(40,35,30,0.55)"; g.lineWidth = 4;
+  for (let row = 0; row * bh < 256; row++) {
+    const y = row * bh;
+    g.beginPath(); g.moveTo(0, y); g.lineTo(256, y); g.stroke();
+    const off = (row % 2) ? bw / 2 : 0;
+    for (let x = off; x <= 256; x += bw) { g.beginPath(); g.moveTo(x, y); g.lineTo(x, y + bh); g.stroke(); }
+    for (let x = off - bw; x < 256; x += bw)
+      if (Math.random() < 0.5) { g.fillStyle = `rgba(0,0,0,${Math.random() * 0.14})`; g.fillRect(x + 3, y + 3, bw - 6, bh - 6); }
+  }
   return new THREE.CanvasTexture(c);
 }
+
+// Procedural cobbled-ground texture.
+function makeFloorTexture() {
+  const c = document.createElement("canvas");
+  c.width = c.height = 256;
+  const g = c.getContext("2d");
+  g.fillStyle = "#aa9c86"; g.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 70; i++) {             // blotches
+    g.fillStyle = `rgba(0,0,0,${Math.random() * 0.13})`;
+    g.beginPath(); g.arc(Math.random() * 256, Math.random() * 256, 8 + Math.random() * 28, 0, 7); g.fill();
+  }
+  for (let i = 0; i < 4000; i++) {           // speckle
+    const v = Math.random() < 0.5 ? 255 : 0;
+    g.fillStyle = `rgba(${v},${v},${v},${Math.random() * 0.05})`;
+    g.fillRect(Math.random() * 256, Math.random() * 256, 2, 2);
+  }
+  g.strokeStyle = "rgba(0,0,0,0.16)"; g.lineWidth = 3; g.strokeRect(0, 0, 256, 256);
+  return new THREE.CanvasTexture(c);
+}
+
+const wallBaseTex = makeWallTexture();
+const floorBaseTex = makeFloorTexture();
 
 function makeNameSprite(text) {
   const c = document.createElement("canvas");
