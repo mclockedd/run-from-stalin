@@ -34,6 +34,47 @@ body {
 }
 .screen.active { display: flex; }
 
+/* ---------- main menu ---------- */
+.menu { display: flex; flex-direction: column; align-items: center; width: 380px; max-width: 92vw; }
+.logo { display: flex; flex-direction: column; align-items: center; line-height: 1; margin-bottom: 6px; }
+.logo-sub {
+  font-family: var(--display); font-weight: 500; font-size: 20px;
+  letter-spacing: 8px; text-transform: uppercase; color: var(--muted); margin-left: 8px;
+}
+.logo-main {
+  font-family: var(--display); font-weight: 700; font-size: 64px;
+  letter-spacing: 2px; text-transform: uppercase; color: var(--text);
+  text-shadow: 0 4px 24px rgba(0,0,0,.6);
+}
+.logo-dots { color: var(--red-bright); text-shadow: 0 0 24px rgba(231,76,60,.6); }
+.subtitle { color: var(--muted); font-size: 13.5px; line-height: 1.55; text-align: center; margin: 4px 0 22px; }
+.kred { color: var(--red-bright); font-weight: 700; }
+
+.menu-card {
+  position: relative; width: 100%;
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  border: 1px solid var(--line); border-radius: 16px; padding: 22px 24px 20px;
+  box-shadow: 0 24px 70px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.04);
+}
+.menu-card::before {
+  content: ""; position: absolute; left: 22px; right: 22px; top: 0; height: 3px;
+  border-radius: 0 0 3px 3px; background: linear-gradient(90deg, transparent, var(--gold), transparent);
+}
+.field-label {
+  display: block; text-align: left; font-size: 11px; letter-spacing: 1.5px;
+  text-transform: uppercase; color: var(--muted); margin: 2px 2px 4px;
+}
+.divider {
+  display: flex; align-items: center; gap: 12px; margin: 18px 0 14px;
+  color: var(--muted); font-size: 11px; letter-spacing: 2px;
+}
+.divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: rgba(255,255,255,.1); }
+.btn-join {
+  white-space: nowrap; font-family: var(--display); letter-spacing: 1px;
+  text-transform: uppercase; background: #6b5440; padding: 0 22px;
+}
+.btn-join:hover { background: var(--gold-dim); color: #1a130c; }
+
 /* ---------- panels (home) ---------- */
 .panel {
   position: relative;
@@ -127,10 +168,55 @@ button:disabled { opacity: .4; cursor: not-allowed; filter: grayscale(.3); }
   letter-spacing: 1px; padding: 2px 7px; border-radius: 20px;
 }
 
-/* ---------- wheel ---------- */
-#wheelScreen { gap: 18px; }
-#wheelTitle { font-family: var(--display); font-size: 30px; letter-spacing: 1px; text-transform: uppercase; }
-#wheel { filter: drop-shadow(0 12px 34px rgba(0,0,0,.65)); }
+/* ---------- killer reveal ---------- */
+#wheelScreen { gap: 30px; }
+#wheelTitle {
+  font-family: var(--display); font-size: 34px; letter-spacing: 1px; text-transform: uppercase;
+  text-shadow: 0 2px 20px rgba(0,0,0,.6); min-height: 42px;
+}
+#wheelTitle .kill { color: var(--red-bright); text-shadow: 0 0 24px rgba(231,76,60,.6); }
+#revealCards { display: flex; flex-wrap: wrap; gap: 16px; justify-content: center; max-width: 760px; }
+.reveal-card {
+  position: relative; width: 110px; padding: 16px 10px 12px;
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  border: 2px solid var(--line); border-radius: 14px; text-align: center;
+  transition: transform .12s, box-shadow .12s, border-color .12s, background .12s;
+  opacity: .82;
+}
+.reveal-card .rc-av {
+  width: 54px; height: 54px; margin: 0 auto 10px; border-radius: 50%;
+  background: radial-gradient(circle at 50% 35%, #f0c27a, #caa05a);
+  display: flex; align-items: center; justify-content: center; font-size: 28px;
+  box-shadow: inset 0 -6px 10px rgba(0,0,0,.25);
+}
+.reveal-card .rc-name {
+  font-family: var(--display); font-size: 16px; letter-spacing: .5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.reveal-card.active {
+  opacity: 1; transform: translateY(-8px) scale(1.06);
+  border-color: var(--gold); box-shadow: 0 10px 30px rgba(224,173,43,.4);
+}
+.reveal-card.killer {
+  opacity: 1; transform: translateY(-10px) scale(1.14);
+  border-color: var(--red-bright);
+  background: linear-gradient(180deg, #5a201c, #3a1714);
+  box-shadow: 0 14px 40px rgba(231,76,60,.6);
+}
+.reveal-card.killer .rc-av { background: radial-gradient(circle at 50% 35%, #ff6b5b, #b5302a); }
+.reveal-card.dim { opacity: .3; filter: grayscale(.5); }
+.reveal-card .rc-crown {
+  position: absolute; top: -30px; left: 50%; transform: translateX(-50%);
+  font-size: 26px; opacity: 0; transition: opacity .2s, top .2s;
+}
+.reveal-card.killer .rc-crown { opacity: 1; top: -34px; }
+.reveal-card .rc-tag {
+  position: absolute; bottom: -12px; left: 50%; transform: translateX(-50%);
+  background: var(--red-bright); color: #fff; font-family: var(--display);
+  font-size: 11px; letter-spacing: 1px; padding: 2px 10px; border-radius: 20px;
+  opacity: 0; transition: opacity .25s;
+}
+.reveal-card.killer .rc-tag { opacity: 1; }
 
 /* ---------- game scene ---------- */
 #scene { position: absolute; inset: 0; }
@@ -142,29 +228,56 @@ button:disabled { opacity: .4; cursor: not-allowed; filter: grayscale(.3); }
 }
 
 /* glassy HUD chip shared look */
-.chip, .role, .timer, .alive, #lobbyCode, #muteBtn {
-  background: rgba(20,14,10,.55);
+.chip, .role, .timer, #lobbyCode, #muteBtn, #statusPanel {
+  background: rgba(20,14,10,.58);
   border: 1px solid rgba(255,255,255,.08);
   -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
-  box-shadow: 0 6px 18px rgba(0,0,0,.35);
+  box-shadow: 0 6px 18px rgba(0,0,0,.4);
 }
 
-#hud {
-  position: absolute; top: 0; left: 0; right: 0;
-  display: flex; justify-content: space-between; align-items: flex-start;
-  padding: 16px 20px; pointer-events: none;
+#hud { position: absolute; inset: 0; pointer-events: none; }
+.role {
+  position: absolute; top: 16px; left: 16px;
+  font-size: 15px; font-weight: 700; padding: 8px 16px; border-radius: 10px;
 }
-.role { font-size: 16px; font-weight: 700; padding: 8px 16px; border-radius: 10px; }
 .role.stalin { color: #fff; background: linear-gradient(180deg, var(--red-bright), var(--red)); border-color: rgba(231,76,60,.5); }
 .role.runner { color: #1a130c; background: linear-gradient(180deg, #f0c14b, var(--gold)); border-color: rgba(224,173,43,.5); }
 .timer {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
   font-family: var(--display); font-weight: 700;
-  font-size: 42px; line-height: 1; padding: 8px 20px; border-radius: 12px;
+  font-size: 44px; line-height: 1; padding: 6px 22px; border-radius: 12px;
   font-variant-numeric: tabular-nums; color: var(--text);
 }
 .timer.low { color: var(--red-bright); animation: pulse .8s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .55; } }
-.alive { font-size: 14px; text-align: right; padding: 8px 14px; border-radius: 10px; }
+
+/* ---------- scoreboard ---------- */
+#statusPanel {
+  position: absolute; top: 16px; right: 16px; width: 196px;
+  border-radius: 12px; padding: 10px 12px; pointer-events: none; z-index: 4;
+}
+#statusPanel.hidden { display: none; }
+#killerTag {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--display); font-size: 16px; letter-spacing: .5px;
+  color: var(--red-bright); padding-bottom: 8px; margin-bottom: 8px;
+  border-bottom: 1px solid rgba(255,255,255,.1);
+}
+#killerTag .st-ico { font-size: 18px; }
+#statusList { list-style: none; margin: 0; padding: 0; }
+#statusList li {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; padding: 3px 0; color: var(--text);
+}
+#statusList li .nm { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#statusList li .dot { width: 9px; height: 9px; border-radius: 50%; background: #4caf50; box-shadow: 0 0 6px rgba(76,175,80,.6); flex: none; }
+#statusList li.caught { color: var(--muted); text-decoration: line-through; }
+#statusList li.caught .dot { background: transparent; box-shadow: none; }
+#statusList li .you { color: var(--gold); font-size: 11px; }
+#statusSummary {
+  margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.1);
+  font-size: 12px; color: var(--muted); text-align: center; letter-spacing: .5px;
+}
 
 /* ---------- overlays ---------- */
 .bigoverlay {

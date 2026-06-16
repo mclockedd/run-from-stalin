@@ -10,26 +10,35 @@
 
 <!-- HOME -->
 <div id="home" class="screen active">
-  <div class="panel">
-    <div class="brand">RUN FOR YOUR</div>
-    <h1><span class="red">NOSTAS…</span></h1>
-    <p class="tag">Spin the wheel — one of you becomes <b>the Killer</b>.<br>Everyone else runs and hides.</p>
-    <input id="nameInput" maxlength="14" placeholder="Your name" autocomplete="off" />
-    <button id="createBtn" class="big">Create Party</button>
-    <div class="or">— or —</div>
-    <div class="joinrow">
-      <input id="codeInput" maxlength="4" placeholder="CODE" autocomplete="off" />
-      <button id="joinBtn">Join</button>
+  <div class="menu">
+    <div class="logo">
+      <span class="logo-sub">RUN FOR YOUR</span>
+      <span class="logo-main">NOSTAS<span class="logo-dots">…</span></span>
     </div>
-    <div id="homeError" class="error"></div>
-    <div class="controls-hint">WASD move · Mouse look · T taunt</div>
+    <p class="subtitle">A multiplayer hide-&amp;-seek party game.<br>One player becomes <b class="kred">THE KILLER</b> — everyone else runs.</p>
+
+    <div class="menu-card">
+      <label class="field-label" for="nameInput">Your name</label>
+      <input id="nameInput" maxlength="14" placeholder="Enter a name" autocomplete="off" />
+      <button id="createBtn" class="big">Create a Party</button>
+
+      <div class="divider"><span>OR JOIN</span></div>
+
+      <div class="joinrow">
+        <input id="codeInput" maxlength="4" placeholder="CODE" autocomplete="off" />
+        <button id="joinBtn" class="btn-join">Join</button>
+      </div>
+      <div id="homeError" class="error"></div>
+    </div>
+
+    <div class="controls-hint">WASD MOVE &nbsp;·&nbsp; MOUSE LOOK &nbsp;·&nbsp; T TAUNT &nbsp;·&nbsp; ESC MENU</div>
   </div>
 </div>
 
-<!-- WHEEL -->
+<!-- KILLER REVEAL -->
 <div id="wheelScreen" class="screen">
   <h2 id="wheelTitle">Choosing the Killer…</h2>
-  <canvas id="wheel" width="420" height="420"></canvas>
+  <div id="revealCards"></div>
 </div>
 
 <!-- GAME + 3D LOBBY -->
@@ -43,8 +52,14 @@
   <!-- in-round HUD -->
   <div id="hud">
     <div id="role" class="role"></div>
-    <div id="timer" class="timer">90</div>
-    <div id="alive" class="alive"></div>
+    <div id="timer" class="timer">120</div>
+  </div>
+
+  <!-- scoreboard: killer + who's alive / caught -->
+  <div id="statusPanel" class="hidden">
+    <div id="killerTag"><span class="st-ico">🔪</span><span id="killerName">—</span></div>
+    <ul id="statusList"></ul>
+    <div id="statusSummary"></div>
   </div>
 
   <!-- lobby HUD (shown while phase = lobby) -->

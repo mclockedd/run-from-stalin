@@ -172,50 +172,51 @@ function renderLobbyHud(s) {
   }
 }
 
-// ---- the wheel (2D overlay) ------------------------------------------------
-const wheelCanvas = document.getElementById("wheel");
-const wctx = wheelCanvas.getContext("2d");
-const WHEEL_COLORS = ["#c0392b", "#d4a017", "#27ae60", "#2980b9", "#8e44ad",
-                      "#e67e22", "#16a085", "#c0392b", "#7f8c8d", "#e74c3c"];
+// ---- killer reveal (slot-machine of player cards) --------------------------
+const AVATARS = ["😀", "😎", "🤠", "🧐", "😴", "🤡", "👻", "🤖", "👽", "🐱", "🦊", "🐻"];
 function runWheel(players, winnerId) {
   show("wheel");
-  document.getElementById("wheelTitle").textContent = "Choosing the Killer…";
-  const n = players.length;
-  const seg = (Math.PI * 2) / n;
-  const winnerIdx = players.findIndex((p) => p.id === winnerId);
-  const targetMid = winnerIdx * seg + seg / 2;
-  const turns = 5 + Math.floor(Math.random() * 4);     // vary the spin each time
-  const finalRot = (Math.PI * 2 * turns) + (-Math.PI / 2 - targetMid);
-  const dur = 4200;
-  const start = performance.now();
-  function frame(now) {
-    const t = Math.min(1, (now - start) / dur);
-    const ease = 1 - Math.pow(1 - t, 3);
-    drawWheel(players, seg, finalRot * ease);
-    if (t < 1) requestAnimationFrame(frame);
-    else document.getElementById("wheelTitle").innerHTML =
-      `<span class="red">${escapeHtml(players[winnerIdx].name)}</span> is the Killer!`;
-  }
-  requestAnimationFrame(frame);
-}
-function drawWheel(players, seg, rot) {
-  const cx = 210, cy = 210, r = 195;
-  wctx.clearRect(0, 0, 420, 420);
-  players.forEach((p, i) => {
-    const a0 = rot + i * seg, a1 = a0 + seg;
-    wctx.beginPath(); wctx.moveTo(cx, cy); wctx.arc(cx, cy, r, a0, a1); wctx.closePath();
-    wctx.fillStyle = WHEEL_COLORS[i % WHEEL_COLORS.length]; wctx.fill();
-    wctx.strokeStyle = "rgba(0,0,0,.35)"; wctx.lineWidth = 2; wctx.stroke();
-    wctx.save(); wctx.translate(cx, cy); wctx.rotate(a0 + seg / 2);
-    wctx.fillStyle = "#fff"; wctx.font = "bold 16px Segoe UI, sans-serif";
-    wctx.textAlign = "right"; wctx.textBaseline = "middle";
-    wctx.fillText(p.name, r - 18, 0); wctx.restore();
+  const title = document.getElementById("wheelTitle");
+  title.textContent = "Choosing the Killer…";
+
+  const wrap = document.getElementById("revealCards");
+  wrap.innerHTML = "";
+  const cards = players.map((p, i) => {
+    const card = document.createElement("div");
+    card.className = "reveal-card";
+    card.innerHTML =
+      `<div class="rc-crown">🔪</div>` +
+      `<div class="rc-av">${AVATARS[i % AVATARS.length]}</div>` +
+      `<div class="rc-name">${escapeHtml(p.name)}</div>` +
+      `<div class="rc-tag">KILLER</div>`;
+    wrap.appendChild(card);
+    return card;
   });
-  wctx.beginPath(); wctx.arc(cx, cy, 26, 0, Math.PI * 2);
-  wctx.fillStyle = "#1d1712"; wctx.fill();
-  wctx.strokeStyle = "#d4a017"; wctx.lineWidth = 3; wctx.stroke();
-  wctx.beginPath(); wctx.moveTo(cx - 16, 6); wctx.lineTo(cx + 16, 6); wctx.lineTo(cx, 40);
-  wctx.closePath(); wctx.fillStyle = "#f3e9d8"; wctx.fill();
+  const n = cards.length;
+  const winnerIdx = players.findIndex((p) => p.id === winnerId);
+  const setActive = (idx) => cards.forEach((c, i) => c.classList.toggle("active", i === idx));
+
+  // cycle the highlight, slowing down, then land + reveal
+  const dur = 3000;
+  const t0 = performance.now();
+  let i = Math.floor(Math.random() * n);
+  function step() {
+    setActive(i % n);
+    const elapsed = performance.now() - t0;
+    if (elapsed >= dur && (i % n) === winnerIdx) { land(); return; }
+    i++;
+    const p = Math.min(1, elapsed / dur);
+    setTimeout(step, 60 + p * p * 240);   // 60ms → ~300ms
+  }
+  function land() {
+    cards.forEach((c, idx) => {
+      c.classList.remove("active");
+      if (idx === winnerIdx) c.classList.add("killer");
+      else c.classList.add("dim");
+    });
+    title.innerHTML = `<span class="kill">${escapeHtml(players[winnerIdx].name)}</span> is THE KILLER`;
+  }
+  step();
 }
 
 // ---- three.js scene --------------------------------------------------------
@@ -548,7 +549,8 @@ function onState(msg) {
 
   const lobby = msg.phase === "lobby";
   document.getElementById("lobbyHud").classList.toggle("hidden", !lobby);
-  document.getElementById("hud").style.display = lobby ? "none" : "flex";
+  document.getElementById("hud").style.display = lobby ? "none" : "block";
+  document.getElementById("statusPanel").classList.toggle("hidden", lobby);
   const meP = msg.players.find((p) => p.id === myId);
   document.getElementById("playHint").classList.toggle("hidden", !(msg.phase === "playing" && !(meP && meP.caught)));
 
@@ -603,9 +605,21 @@ function updateRoundHud(msg) {
   timerEl.textContent = Math.ceil(msg.timeLeft);
   timerEl.classList.toggle("low", msg.timeLeft <= 15);
 
-  const runnersTotal = msg.players.filter((p) => !p.stalin).length;
-  const runnersAlive = msg.players.filter((p) => !p.stalin && !p.caught).length;
-  document.getElementById("alive").textContent = `Runners left: ${runnersAlive} / ${runnersTotal}`;
+  // scoreboard: killer + alive/caught runners
+  const killer = msg.players.find((p) => p.stalin);
+  document.getElementById("killerName").textContent = killer ? killer.name : "—";
+  const runners = msg.players.filter((p) => !p.stalin);
+  const list = document.getElementById("statusList");
+  list.innerHTML = "";
+  for (const p of runners) {
+    const li = document.createElement("li");
+    if (p.caught) li.className = "caught";
+    li.innerHTML = `<span class="dot"></span><span class="nm">${p.caught ? "💀 " : ""}${escapeHtml(p.name)}</span>`;
+    if (p.id === myId) { const y = document.createElement("span"); y.className = "you"; y.textContent = "you"; li.appendChild(y); }
+    list.appendChild(li);
+  }
+  const alive = runners.filter((p) => !p.caught).length;
+  document.getElementById("statusSummary").textContent = `${alive} alive · ${runners.length - alive} caught`;
 
   // kill sound when the caught count grows — incl. the FINAL catch, which the
   // server delivers in the "gameover" state (same tick the round ends).

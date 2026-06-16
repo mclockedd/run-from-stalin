@@ -332,7 +332,7 @@ public class GameServer
             : ids;
         room.WheelWinnerId = pool[Random.Shared.Next(pool.Count)];
         room.Phase = "wheel";
-        room.WheelTimer = 4.5f;
+        room.WheelTimer = 5.2f;   // gives the client reveal animation room to play
 
         // Send players in a freshly shuffled order so the wheel layout varies each spin.
         var entries = room.Players.Values
