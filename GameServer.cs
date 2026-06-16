@@ -15,11 +15,9 @@ public class Player
     public float InX, InY;   // desired movement direction (world space, normalized client-side)
     public float Face;       // yaw the player is looking, radians (cosmetic, for other clients)
     public bool IsStalin;
-    public bool Caught;             // caught == ghost
+    public bool Caught;
     public bool Connected = true;
     public DateTime LastTaunt = DateTime.MinValue;
-    public float ReviveProgress;    // seconds held on a shrine (0..ReviveHold)
-    public DateTime ImmuneUntil = DateTime.MinValue;   // brief no-catch window after reviving
 }
 
 public class Wall
@@ -49,8 +47,6 @@ public class Room
     public const float WorldH = 2000;
     public List<Wall> GameWalls = new();
     public int MapVersion = 0;      // bumps every time the arena is regenerated
-    public int RevivesLeft = 0;     // shared team revive budget for the round
-    public List<(float X, float Y)> Shrines = new();
 
     // lobby room
     public const float LobbyW = 1100;
@@ -100,36 +96,11 @@ public class Room
             placed.Add(c);
             GameWalls.Add(c);
         }
-
-        // Three revive shrines in open ground, spread out, away from the centre.
-        Shrines.Clear();
-        int sa = 0;
-        while (Shrines.Count < 3 && sa < 400)
-        {
-            sa++;
-            float x = rng.Next(220, (int)WorldW - 220), y = rng.Next(220, (int)WorldH - 220);
-            if (PointInAnyWall(x, y, 70)) continue;
-            float dcx = x - WorldW / 2, dcy = y - WorldH / 2;
-            if (dcx * dcx + dcy * dcy < 450 * 450) continue;     // not on the Killer's spawn
-            bool tooClose = false;
-            foreach (var sh in Shrines)
-                if ((x - sh.X) * (x - sh.X) + (y - sh.Y) * (y - sh.Y) < 750 * 750) { tooClose = true; break; }
-            if (tooClose) continue;
-            Shrines.Add((x, y));
-        }
         MapVersion++;
     }
 
     private static bool RectsOverlap(float ax, float ay, float aw, float ah, float bx, float by, float bw, float bh)
         => ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
-
-    private bool PointInAnyWall(float x, float y, float margin)
-    {
-        foreach (var w in GameWalls)
-            if (x >= w.X - margin && x <= w.X + w.W + margin && y >= w.Y - margin && y <= w.Y + w.H + margin)
-                return true;
-        return false;
-    }
 
     private void BuildLobbyMap()
     {
@@ -155,11 +126,6 @@ public class GameServer
     private const float CatchDist = 30f;
     private const float RoundSeconds = 120f;
     private static readonly TimeSpan TauntCooldown = TimeSpan.FromSeconds(1.2);
-    private const int ReviveBudget = 3;
-    private const float ShrineRadius = 85f;     // how close a ghost must be to channel
-    private const float GuardRadius = 240f;     // Killer within this freezes the shrine
-    private const float ReviveHold = 5f;        // seconds of channel to revive
-    private static readonly TimeSpan ReviveImmunity = TimeSpan.FromSeconds(2);
 
     // ---- connection handling -------------------------------------------------
 
@@ -370,15 +336,12 @@ public class GameServer
     private void StartRound(Room room)
     {
         room.GenerateGameMap();   // fresh terrain every round
-        room.RevivesLeft = ReviveBudget;
         var players = room.Players.Values.ToList();
         foreach (var p in players)
         {
             p.IsStalin = p.Id == room.WheelWinnerId;
             p.Caught = false;
             p.InX = p.InY = 0;
-            p.ReviveProgress = 0;
-            p.ImmuneUntil = DateTime.MinValue;
         }
         room.LastStalinId = room.WheelWinnerId;
         var stalin = players.FirstOrDefault(p => p.IsStalin);
@@ -408,89 +371,30 @@ public class GameServer
     private void UpdatePlaying(Room room, float dt)
     {
         room.TimeLeft -= dt;
-        var now = DateTime.UtcNow;
 
-        // Movement: runners/killer collide with walls; ghosts (caught) phase through.
         foreach (var p in room.Players.Values)
         {
-            if (p.Caught) MoveGhost(room, p, dt);
-            else ApplyMovement(room, p, dt, p.IsStalin ? StalinSpeed : RunnerSpeed);
+            if (p.Caught) continue;
+            ApplyMovement(room, p, dt, p.IsStalin ? StalinSpeed : RunnerSpeed);
         }
 
-        // Catch detection (ghosts and briefly-immune revivers are skipped).
         var stalin = room.Players.Values.FirstOrDefault(p => p.IsStalin && !p.Caught);
         if (stalin != null)
         {
             foreach (var p in room.Players.Values)
             {
-                if (p.IsStalin || p.Caught || now < p.ImmuneUntil) continue;
+                if (p.IsStalin || p.Caught) continue;
                 float dx = p.X - stalin.X, dy = p.Y - stalin.Y;
                 if (dx * dx + dy * dy <= CatchDist * CatchDist)
-                {
                     p.Caught = true;
-                    p.ReviveProgress = 0;
-                }
             }
         }
 
-        // Ghosts channel shrines to revive (if the team still has revives).
-        UpdateRevives(room, dt, stalin);
-
-        // Killer wins only when every runner is a ghost AND no revives remain.
         bool anyRunnerFree = room.Players.Values.Any(p => !p.IsStalin && !p.Caught);
-        bool anyRunner = room.Players.Values.Any(p => !p.IsStalin);
-        if (anyRunner && !anyRunnerFree && room.RevivesLeft <= 0)
+        if (!anyRunnerFree && room.Players.Values.Any(p => !p.IsStalin))
             EndRound(room, "stalin");
         else if (room.TimeLeft <= 0)
             EndRound(room, "runners");
-    }
-
-    private void UpdateRevives(Room room, float dt, Player? stalin)
-    {
-        foreach (var p in room.Players.Values)
-        {
-            if (!p.Caught || p.IsStalin) continue;
-            if (room.RevivesLeft <= 0) { p.ReviveProgress = 0; continue; }
-
-            bool channeling = false;
-            foreach (var sh in room.Shrines)
-            {
-                float dx = p.X - sh.X, dy = p.Y - sh.Y;
-                if (dx * dx + dy * dy > ShrineRadius * ShrineRadius) continue;
-                // blocked if the Killer is guarding this shrine
-                bool guarded = stalin != null &&
-                    (stalin.X - sh.X) * (stalin.X - sh.X) + (stalin.Y - sh.Y) * (stalin.Y - sh.Y) <= GuardRadius * GuardRadius;
-                if (!guarded) channeling = true;
-                break;
-            }
-
-            if (channeling)
-            {
-                p.ReviveProgress += dt;
-                if (p.ReviveProgress >= ReviveHold)
-                {
-                    p.Caught = false;
-                    p.ReviveProgress = 0;
-                    p.ImmuneUntil = DateTime.UtcNow + ReviveImmunity;
-                    room.RevivesLeft--;
-                }
-            }
-            else
-            {
-                p.ReviveProgress = MathF.Max(0, p.ReviveProgress - dt * 1.5f);
-            }
-        }
-    }
-
-    // Ghost movement: free roam, no wall collision, clamped to the arena.
-    private void MoveGhost(Room room, Player p, float dt)
-    {
-        float vx = p.InX, vy = p.InY;
-        float len = MathF.Sqrt(vx * vx + vy * vy);
-        if (len <= 0.01f) return;
-        if (len > 1f) { vx /= len; vy /= len; }
-        p.X = Math.Clamp(p.X + vx * RunnerSpeed * dt, Radius, Room.WorldW - Radius);
-        p.Y = Math.Clamp(p.Y + vy * RunnerSpeed * dt, Radius, Room.WorldH - Radius);
     }
 
     private void ApplyMovement(Room room, Player p, float dt, float speed)
@@ -562,17 +466,8 @@ public class GameServer
             y = MathF.Round(p.Y, 1),
             face = MathF.Round(p.Face, 3),
             stalin = p.IsStalin,
-            caught = p.Caught,
-            revive = MathF.Round(p.ReviveProgress / ReviveHold, 2)   // 0..1 channel progress
+            caught = p.Caught
         }).ToList();
-
-        var killer = room.Players.Values.FirstOrDefault(p => p.IsStalin && !p.Caught);
-        var shrines = room.Shrines.Select(sh => new
-        {
-            x = sh.X, y = sh.Y,
-            guarded = killer != null &&
-                (killer.X - sh.X) * (killer.X - sh.X) + (killer.Y - sh.Y) * (killer.Y - sh.Y) <= GuardRadius * GuardRadius
-        });
 
         var msg = new
         {
@@ -585,10 +480,8 @@ public class GameServer
             countdown = MathF.Ceiling(MathF.Max(0, room.Countdown)),
             winner = room.Winner,
             stalinName = room.StalinName,
-            revivesLeft = room.RevivesLeft,
             world = new { w = room.ActiveW, h = room.ActiveH },
             walls = room.ActiveWalls.Select(w => new { x = w.X, y = w.Y, w = w.W, h = w.H }),
-            shrines,
             players
         };
         return Broadcast(room, msg);

@@ -264,45 +264,6 @@ let wallGroup = new THREE.Group();
 scene.add(wallGroup);
 let builtWorldKey = "";
 
-// revive shrines
-const shrineGroup = new THREE.Group();
-scene.add(shrineGroup);
-let shrineMeshes = [];
-let builtShrineKey = "";
-function manageShrines(s) {
-  const show = (s.phase === "playing" || s.phase === "countdown") && s.shrines && s.shrines.length;
-  if (!show) { if (shrineMeshes.length) { shrineGroup.clear(); shrineMeshes = []; builtShrineKey = ""; } return; }
-  const key = "v" + (s.mapVersion || 0) + ":" + s.shrines.length;
-  if (key !== builtShrineKey) {
-    builtShrineKey = key;
-    shrineGroup.clear(); shrineMeshes = [];
-    for (const sh of s.shrines) {
-      const g = new THREE.Group();
-      const beam = new THREE.Mesh(
-        new THREE.CylinderGeometry(24, 32, 260, 18, 1, true),
-        new THREE.MeshBasicMaterial({ color: 0x4fd0ff, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false })
-      );
-      beam.position.y = 130;
-      const ring = new THREE.Mesh(
-        new THREE.RingGeometry(78, 92, 40),
-        new THREE.MeshBasicMaterial({ color: 0x4fd0ff, transparent: true, opacity: 0.6, side: THREE.DoubleSide })
-      );
-      ring.rotation.x = -Math.PI / 2; ring.position.y = 2;
-      g.add(beam, ring);
-      g.position.set(sh.x, 0, sh.y);
-      shrineGroup.add(g);
-      shrineMeshes.push({ beam, ring });
-    }
-  }
-  const t = performance.now() / 1000;
-  for (let i = 0; i < shrineMeshes.length; i++) {
-    const col = s.shrines[i].guarded ? 0xe74c3c : 0x4fd0ff;
-    shrineMeshes[i].beam.material.color.setHex(col);
-    shrineMeshes[i].ring.material.color.setHex(col);
-    shrineMeshes[i].beam.material.opacity = 0.22 + 0.12 * Math.sin(t * 3 + i);
-  }
-}
-
 function buildWorld(s) {
   const isLobby = s.phase === "lobby";
   const key = isLobby ? "lobby" : "game:" + (s.mapVersion || 0);
@@ -561,8 +522,7 @@ function updateRoundHud(msg) {
 
   const runnersTotal = msg.players.filter((p) => !p.stalin).length;
   const runnersAlive = msg.players.filter((p) => !p.stalin && !p.caught).length;
-  document.getElementById("alive").textContent =
-    `Runners ${runnersAlive}/${runnersTotal}  ·  Revives ${msg.revivesLeft ?? 0}`;
+  document.getElementById("alive").textContent = `Runners left: ${runnersAlive} / ${runnersTotal}`;
 
   // kill sound when the caught count grows during play
   if (msg.phase === "playing") {
@@ -580,11 +540,11 @@ function syncAvatars(msg) {
     if (!a) { a = makeAvatar(p); avatars.set(p.id, a); }
     a.target = p;
     a.group.visible = p.id !== myId;             // hide own body in first person
-    const col = p.stalin ? 0xc0392b : (p.caught ? 0x9fc2ff : 0xd4a017);
+    const col = p.stalin ? 0xc0392b : (p.caught ? 0x666666 : 0xd4a017);
     a.body.material.color.setHex(col);
-    a.body.material.opacity = p.caught ? 0.38 : 1;
+    a.body.material.opacity = p.caught ? 0.45 : 1;
     a.body.material.transparent = p.caught;
-    a.label.material.opacity = p.caught ? 0.5 : 1;
+    a.label.material.opacity = p.caught ? 0.4 : 1;
   }
   for (const [id, a] of avatars) {
     if (!seen.has(id)) { scene.remove(a.group); avatars.delete(id); }
@@ -656,7 +616,6 @@ function renderScene(dt) {
   if (!latest || !["lobby", "playing", "countdown", "gameover"].includes(latest.phase)) return;
 
   buildWorld(latest);
-  manageShrines(latest);
   sendInput(dt);
 
   // Remote players: smooth interpolation toward the latest server state.
@@ -671,38 +630,24 @@ function renderScene(dt) {
   }
 
   const meNow = latest.players.find((p) => p.id === myId);
-  const revivesLeft = latest.revivesLeft ?? 0;
   const specHintEl = document.getElementById("specHint");
-  const ghostHud = document.getElementById("ghostHud");
   let camHandled = false;
 
-  const setMine = () => {
-    const myAv = avatars.get(myId);
-    if (selfPos && myAv) {
-      myAv.render.x = selfPos.x; myAv.render.y = selfPos.y;
-      myAv.group.position.set(selfPos.x, 0, selfPos.y);
-      myAv.group.rotation.y = -yaw;
-    }
-  };
-
-  if (meNow && meNow.caught && revivesLeft > 0) {
-    // GHOST: control a ground ghost toward a shrine to revive.
-    spectating = false; specHintEl.classList.add("hidden"); ghostHud.classList.remove("hidden");
-    predictSelf(dt);
-    setMine();
-    if (selfPos) camera.position.set(selfPos.x, EYE_H, selfPos.y);
-    updateGhostHud(meNow, revivesLeft);
-  } else if (meNow && meNow.caught) {
-    // No revives left → free-fly / follow spectator.
-    ghostHud.classList.add("hidden"); specHintEl.classList.remove("hidden");
+  if (meNow && meNow.caught) {
+    specHintEl.classList.remove("hidden");
+    // Follow-a-player view (see from their position, their facing).
     if (specMode === "follow") {
       const t = latest.players.find((p) => p.id === specTargetId && !p.caught);
       const a = t && avatars.get(t.id);
       if (a) {
         camera.position.set(a.render.x, EYE_H, a.render.y);
-        camera.rotation.y = a.render.face; camera.rotation.x = 0; camHandled = true;
+        camera.rotation.y = a.render.face;
+        camera.rotation.x = 0;
+        camHandled = true;
         specHintEl.textContent = `Watching ${t.name}   ·   SPACE: next player   ·   F: free-fly`;
-      } else { specMode = "free"; }
+      } else {
+        specMode = "free";        // target left or got caught → back to free-fly
+      }
     }
     if (specMode === "free") {
       spectateFly(dt);
@@ -710,10 +655,16 @@ function renderScene(dt) {
       specHintEl.textContent = "Free-fly   ·   WASD + mouse   ·   SPACE: watch a player";
     }
   } else {
-    ghostHud.classList.add("hidden"); specHintEl.classList.add("hidden");
+    specHintEl.classList.add("hidden");
     spectating = false; specMode = "free"; specTargetId = null;
+    // Local player: client-side prediction (instant, no 30Hz stutter).
     predictSelf(dt);
-    setMine();
+    const myAv = avatars.get(myId);
+    if (selfPos && myAv) {
+      myAv.render.x = selfPos.x; myAv.render.y = selfPos.y;
+      myAv.group.position.set(selfPos.x, 0, selfPos.y);
+      myAv.group.rotation.y = -yaw;
+    }
     if (selfPos) camera.position.set(selfPos.x, EYE_H, selfPos.y);
     else camera.position.set(latest.world.w / 2, 300, latest.world.h / 2);
   }
@@ -725,22 +676,6 @@ function renderScene(dt) {
   updateWalkSound();
 }
 
-function updateGhostHud(me, revivesLeft) {
-  document.getElementById("reviveBar").style.width = Math.round((me.revive || 0) * 100) + "%";
-  document.getElementById("ghostSub").textContent = `Team revives left: ${revivesLeft}`;
-  const msg = document.getElementById("ghostMsg");
-  let onShrine = false, guarded = false;
-  if (latest.shrines && selfPos) {
-    for (const sh of latest.shrines) {
-      const dx = selfPos.x - sh.x, dy = selfPos.y - sh.y;
-      if (dx * dx + dy * dy <= 92 * 92) { onShrine = true; guarded = sh.guarded; break; }
-    }
-  }
-  if (onShrine && guarded) { msg.textContent = "Shrine guarded by the Killer!"; msg.className = "guarded"; }
-  else if ((me.revive || 0) > 0) { msg.textContent = "Hold the shrine…"; msg.className = "holding"; }
-  else { msg.textContent = "Ghost — reach a glowing shrine to revive"; msg.className = ""; }
-}
-
 // Predict the local player from input each frame, then softly correct toward
 // the authoritative server position (handles collisions, catches, spawns).
 function predictSelf(dt) {
@@ -748,7 +683,7 @@ function predictSelf(dt) {
   if (!me) { selfPos = null; return; }
   if (!selfPos) { selfPos = { x: me.x, y: me.y }; return; }
 
-  const canWalk = dt > 0 && (latest.phase === "playing" || latest.phase === "lobby");
+  const canWalk = dt > 0 && !me.caught && (latest.phase === "playing" || latest.phase === "lobby");
   if (canWalk) {
     const f = (pressed.has("KeyW") || pressed.has("ArrowUp") ? 1 : 0) - (pressed.has("KeyS") || pressed.has("ArrowDown") ? 1 : 0);
     const r = (pressed.has("KeyD") || pressed.has("ArrowRight") ? 1 : 0) - (pressed.has("KeyA") || pressed.has("ArrowLeft") ? 1 : 0);
@@ -757,14 +692,7 @@ function predictSelf(dt) {
       let mx = fx * f + rx * r, my = fz * f + rz * r;
       const len = Math.hypot(mx, my); if (len > 1) { mx /= len; my /= len; }
       const speed = me.stalin ? SPEED_STALIN : SPEED_RUN;
-      if (me.caught) {
-        // ghost: float freely, no wall collision
-        const R = PLAYER_R, W = latest.world.w, H = latest.world.h;
-        selfPos.x = Math.max(R, Math.min(W - R, selfPos.x + mx * speed * dt));
-        selfPos.y = Math.max(R, Math.min(H - R, selfPos.y + my * speed * dt));
-      } else {
-        clientMove(selfPos, mx * speed * dt, my * speed * dt);
-      }
+      clientMove(selfPos, mx * speed * dt, my * speed * dt);
     }
   }
 
