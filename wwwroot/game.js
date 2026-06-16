@@ -48,11 +48,26 @@ const Sound = {
   setMode(mode) {
     if (mode === this.mode) return;        // already in this mode → keep playing
     this.mode = mode;
-    if (this.current) { this.current.pause(); this.current = null; }
-    const url = this.pick(this.pools[mode]);
+    if (this.current) { this.current.onended = null; this.current.pause(); this.current = null; }
+    this.queue = null; this.qi = 0;
+    if (mode === "game") { this._playNext(); return; }   // game: shuffled playlist, no loop
+    const url = this.pick(this.pools.lobby);             // lobby: single random track, looped
     if (!url) return;
     const a = new Audio(url);
-    a.loop = true; a.volume = 0.18;   // background music sits low under the SFX
+    a.loop = true; a.volume = 0.18;
+    this.current = a;
+    if (this.ready && !this.muted) a.play().catch(() => {});
+  },
+  _shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [a[i], a[j]] = [a[j], a[i]]; } return a; },
+  _playNext() {
+    if (this.mode !== "game") return;
+    const pool = this.pools.game || [];
+    if (pool.length === 0) return;
+    if (!this.queue || this.qi >= this.queue.length) { this.queue = this._shuffle(pool.slice()); this.qi = 0; }
+    const url = this.queue[this.qi++];
+    const a = new Audio(url);
+    a.loop = false; a.volume = 0.18;        // no loop — advance through the shuffle
+    a.onended = () => { if (this.mode === "game") this._playNext(); };
     this.current = a;
     if (this.ready && !this.muted) a.play().catch(() => {});
   },
@@ -207,14 +222,30 @@ function drawWheel(players, seg, rot) {
 const sceneEl = document.getElementById("scene");
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
 sceneEl.appendChild(renderer.domElement);
 
+const SKY_TOP = new THREE.Color(0x1d2c52);
+const SKY_HORIZON = new THREE.Color(0xd98a4e);
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x3a3550);
-scene.fog = new THREE.Fog(0x3a3550, 300, 1900);
+scene.fog = new THREE.Fog(0x9c7350, 400, 2600);
 
-const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 6000);
+const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 8000);
 camera.rotation.order = "YXZ";
+
+// gradient sky dome (follows the camera so the horizon stays put)
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(4000, 32, 16),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false, fog: false,
+    uniforms: { top: { value: SKY_TOP }, horizon: { value: SKY_HORIZON } },
+    vertexShader: "varying vec3 vp; void main(){ vp = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }",
+    fragmentShader: "varying vec3 vp; uniform vec3 top; uniform vec3 horizon; void main(){ float h = clamp((normalize(vp).y + 0.1) * 1.1, 0.0, 1.0); gl_FragColor = vec4(mix(horizon, top, pow(h, 0.55)), 1.0); }",
+  })
+);
+scene.add(sky);
 
 // Spatial audio: listener rides the camera, taunts play from the taunter's body.
 const listener = new THREE.AudioListener();
@@ -253,11 +284,14 @@ function updateWalkSound() {
   else if (!walkAudio.paused) { walkAudio.pause(); }
 }
 
-scene.add(new THREE.HemisphereLight(0xfff1d0, 0x4a3a2a, 1.25));
-const sun = new THREE.DirectionalLight(0xffe6b8, 1.1);
-sun.position.set(0.5, 1, 0.3);
+scene.add(new THREE.HemisphereLight(0x9fb0d8, 0x5a4636, 0.65));
+scene.add(new THREE.AmbientLight(0x55504a, 0.35));
+const sun = new THREE.DirectionalLight(0xffe0b0, 1.7);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.bias = -0.0006;
 scene.add(sun);
-scene.add(new THREE.AmbientLight(0x6a5f50, 0.5));
+scene.add(sun.target);
 
 let floor = null;
 let wallGroup = new THREE.Group();
@@ -280,7 +314,19 @@ function buildWorld(s) {
   );
   floor.rotation.x = -Math.PI / 2;
   floor.position.set(s.world.w / 2, 0, s.world.h / 2);
+  floor.receiveShadow = true;
   scene.add(floor);
+
+  // aim the sun + shadow camera at the centre of the current map
+  const cxw = s.world.w / 2, czw = s.world.h / 2;
+  sun.position.set(cxw + 900, 2000, czw + 700);
+  sun.target.position.set(cxw, 0, czw);
+  sun.target.updateMatrixWorld();
+  const ext = Math.max(s.world.w, s.world.h) / 2 + 250;
+  const sc = sun.shadow.camera;
+  sc.left = -ext; sc.right = ext; sc.top = ext; sc.bottom = -ext;
+  sc.near = 200; sc.far = 6000;
+  sc.updateProjectionMatrix();
 
   // dispose old wall meshes + their textures
   for (const c of wallGroup.children) { c.geometry.dispose(); c.material.map?.dispose(); c.material.dispose(); }
@@ -299,6 +345,8 @@ function buildWorld(s) {
     const mat = new THREE.MeshStandardMaterial({ map: wtex, color: col, roughness: 0.95 });
     const box = new THREE.Mesh(new THREE.BoxGeometry(w.w, h, w.h), mat);
     box.position.set(w.x + w.w / 2, h / 2, w.y + w.h / 2);
+    box.castShadow = true;
+    box.receiveShadow = true;
     wallGroup.add(box);
   }
 }
@@ -369,9 +417,11 @@ function makeAvatar(p) {
   const mat = new THREE.MeshStandardMaterial({ color: 0xd4a017, roughness: 0.6 });
   const body = new THREE.Mesh(new THREE.CapsuleGeometry(PLAYER_R, BODY_H - PLAYER_R * 2, 4, 10), mat);
   body.position.y = BODY_H / 2;
+  body.castShadow = true;
   const head = new THREE.Mesh(new THREE.SphereGeometry(PLAYER_R * 0.7, 12, 10),
     new THREE.MeshStandardMaterial({ color: 0xf0c27a, roughness: 0.6 }));
   head.position.y = BODY_H + 4;
+  head.castShadow = true;
   const nose = new THREE.Mesh(new THREE.ConeGeometry(5, 14, 8), new THREE.MeshStandardMaterial({ color: 0x222 }));
   nose.rotation.x = Math.PI / 2;
   nose.position.set(0, BODY_H + 4, -PLAYER_R * 0.7 - 4);
@@ -524,8 +574,11 @@ function updateRoundHud(msg) {
   const runnersAlive = msg.players.filter((p) => !p.stalin && !p.caught).length;
   document.getElementById("alive").textContent = `Runners left: ${runnersAlive} / ${runnersTotal}`;
 
-  // kill sound when the caught count grows during play
-  if (msg.phase === "playing") {
+  // kill sound when the caught count grows — incl. the FINAL catch, which the
+  // server delivers in the "gameover" state (same tick the round ends).
+  if (msg.phase === "countdown") {
+    lastCaughtCount = 0;
+  } else if (msg.phase === "playing" || msg.phase === "gameover") {
     const caught = msg.players.filter((p) => p.caught).length;
     if (caught > lastCaughtCount) Sound.playKill();
     lastCaughtCount = caught;
@@ -671,6 +724,7 @@ function renderScene(dt) {
 
   if (!camHandled) { camera.rotation.y = yaw; camera.rotation.x = pitch; }
 
+  sky.position.copy(camera.position);   // keep the horizon centred on the viewer
   renderer.render(scene, camera);
   drawRadar();
   updateWalkSound();
