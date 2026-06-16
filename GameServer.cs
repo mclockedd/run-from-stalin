@@ -18,6 +18,8 @@ public class Player
     public bool Caught;
     public bool Connected = true;
     public DateTime LastTaunt = DateTime.MinValue;
+    public float BoostLeft;   // seconds of sprint remaining
+    public float BoostCd;     // seconds until sprint is ready again
 }
 
 public class Wall
@@ -180,6 +182,9 @@ public class GameServer
     private const float Radius = 18f;
     private const float CatchDist = 30f;
     private const float RoundSeconds = 120f;
+    private const float BoostMultiplier = 1.5f;   // sprint speed factor
+    private const float BoostDuration = 1.3f;     // how long a sprint lasts
+    private const float BoostCooldown = 5f;       // wait before it's ready again
     private static readonly TimeSpan TauntCooldown = TimeSpan.FromSeconds(1.2);
 
     // ---- connection handling -------------------------------------------------
@@ -230,6 +235,11 @@ public class GameServer
                             break;
                         case "taunt" when room != null && player != null:
                             TryTaunt(room, player);
+                            break;
+                        case "boost" when room != null && player != null:
+                            if (!player.Caught && player.BoostLeft <= 0 && player.BoostCd <= 0
+                                && (room.Phase == "playing" || room.Phase == "lobby"))
+                                player.BoostLeft = BoostDuration;
                             break;
                         case "restart" when room != null && player != null:
                             if (room.HostId == player.Id && (room.Phase == "gameover" || room.Phase == "playing"))
@@ -397,6 +407,7 @@ public class GameServer
             p.IsStalin = p.Id == room.WheelWinnerId;
             p.Caught = false;
             p.InX = p.InY = 0;
+            p.BoostLeft = p.BoostCd = 0;
         }
         room.LastStalinId = room.WheelWinnerId;
         var stalin = players.FirstOrDefault(p => p.IsStalin);
@@ -420,7 +431,21 @@ public class GameServer
     private void MoveEveryone(Room room, float dt)
     {
         foreach (var p in room.Players.Values)
-            ApplyMovement(room, p, dt, RunnerSpeed);
+        {
+            TickBoost(p, dt);
+            ApplyMovement(room, p, dt, RunnerSpeed * (p.BoostLeft > 0 ? BoostMultiplier : 1f));
+        }
+    }
+
+    // Counts down an active sprint, then its cooldown.
+    private void TickBoost(Player p, float dt)
+    {
+        if (p.BoostLeft > 0)
+        {
+            p.BoostLeft -= dt;
+            if (p.BoostLeft <= 0) p.BoostCd = BoostCooldown;
+        }
+        else if (p.BoostCd > 0) p.BoostCd -= dt;
     }
 
     private void UpdatePlaying(Room room, float dt)
@@ -429,8 +454,10 @@ public class GameServer
 
         foreach (var p in room.Players.Values)
         {
+            TickBoost(p, dt);
             if (p.Caught) continue;
-            ApplyMovement(room, p, dt, p.IsStalin ? StalinSpeed : RunnerSpeed);
+            float speed = (p.IsStalin ? StalinSpeed : RunnerSpeed) * (p.BoostLeft > 0 ? BoostMultiplier : 1f);
+            ApplyMovement(room, p, dt, speed);
         }
 
         var stalin = room.Players.Values.FirstOrDefault(p => p.IsStalin && !p.Caught);

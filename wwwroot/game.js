@@ -7,6 +7,8 @@ const WALL_H = 95;
 const BODY_H = 52;
 const SPEED_RUN = 230;      // must match the server
 const SPEED_STALIN = 255;
+const BOOST_MULT = 1.5, BOOST_DUR = 1.3, BOOST_CD = 5;   // sprint (must match server)
+let boostLeft = 0, boostCd = 0;
 let selfPos = null;         // client-predicted position of the local player
 let spectating = false;     // free-fly spectator state (after being caught)
 let specPos = null;
@@ -99,7 +101,7 @@ function connect(onOpenMsg) {
   ws.onmessage = (e) => handle(JSON.parse(e.data));
   ws.onclose = () => {
     if (myId) showHomeError("Disconnected from server.");
-    myId = null; latest = null; selfPos = null; spectating = false; specPos = null;
+    myId = null; latest = null; selfPos = null; spectating = false; specPos = null; boostLeft = 0; boostCd = 0;
     if (Sound.current) Sound.current.pause();
     Sound.mode = null;
     showPause(false);
@@ -521,6 +523,14 @@ window.addEventListener("keydown", (e) => {
     const now = performance.now();
     if (now - lastTauntSent >= 1200) { lastTauntSent = now; ensureAudioCtx(); send({ type: "taunt" }); }
   }
+  // Shift = sprint (everyone). Ignore key auto-repeat via the cooldown check.
+  if ((e.code === "ShiftLeft" || e.code === "ShiftRight") && canMoveNow()) {
+    const me = latest.players.find((p) => p.id === myId);
+    if (me && !me.caught && boostLeft <= 0 && boostCd <= 0) {
+      boostLeft = BOOST_DUR;
+      send({ type: "boost" });
+    }
+  }
   // spectator controls (only while caught)
   const meK = latest && latest.players.find((p) => p.id === myId);
   if (meK && meK.caught) {
@@ -625,6 +635,7 @@ function updateRoundHud(msg) {
   // server delivers in the "gameover" state (same tick the round ends).
   if (msg.phase === "countdown") {
     lastCaughtCount = 0;
+    boostLeft = 0; boostCd = 0;   // sprint resets ready each round (matches server)
   } else if (msg.phase === "playing" || msg.phase === "gameover") {
     const caught = msg.players.filter((p) => p.caught).length;
     if (caught > lastCaughtCount) Sound.playKill();
@@ -715,6 +726,7 @@ let lastRafRender = 0;
 function renderScene(dt) {
   if (!latest || !["lobby", "playing", "countdown", "gameover"].includes(latest.phase)) return;
 
+  tickBoost(dt);
   buildWorld(latest);
   sendInput(dt);
 
@@ -775,6 +787,30 @@ function renderScene(dt) {
   renderer.render(scene, camera);
   drawRadar();
   updateWalkSound();
+  updateBoostUI();
+}
+
+function tickBoost(dt) {
+  if (dt <= 0) return;
+  if (boostLeft > 0) { boostLeft -= dt; if (boostLeft <= 0) boostCd = BOOST_CD; }
+  else if (boostCd > 0) boostCd -= dt;
+}
+
+function updateBoostUI() {
+  const bar = document.getElementById("boostBar");
+  const me = latest && latest.players.find((p) => p.id === myId);
+  const active = latest && (latest.phase === "playing" || latest.phase === "lobby") && me && !me.caught;
+  bar.classList.toggle("hidden", !active);
+  if (!active) return;
+  const fill = document.getElementById("boostFill");
+  const label = document.getElementById("boostLabel");
+  if (boostLeft > 0) {
+    bar.className = "sprinting"; fill.style.transform = "scaleX(1)"; label.textContent = "SPRINTING";
+  } else if (boostCd > 0) {
+    bar.className = "cooling"; fill.style.transform = `scaleX(${1 - boostCd / BOOST_CD})`; label.textContent = "RECHARGING";
+  } else {
+    bar.className = ""; fill.style.transform = "scaleX(1)"; label.textContent = "SHIFT — SPRINT";
+  }
 }
 
 // Predict the local player from input each frame, then softly correct toward
@@ -792,7 +828,7 @@ function predictSelf(dt) {
       const fx = -Math.sin(yaw), fz = -Math.cos(yaw), rx = Math.cos(yaw), rz = -Math.sin(yaw);
       let mx = fx * f + rx * r, my = fz * f + rz * r;
       const len = Math.hypot(mx, my); if (len > 1) { mx /= len; my /= len; }
-      const speed = me.stalin ? SPEED_STALIN : SPEED_RUN;
+      const speed = (me.stalin ? SPEED_STALIN : SPEED_RUN) * (boostLeft > 0 ? BOOST_MULT : 1);
       clientMove(selfPos, mx * speed * dt, my * speed * dt);
     }
   }

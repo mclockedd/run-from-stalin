@@ -352,6 +352,27 @@ button:disabled { opacity: .4; cursor: not-allowed; filter: grayscale(.3); }
 }
 #radar.hidden { display: none; }
 #playHint.hidden { display: none; }
+
+/* ---------- sprint / boost bar ---------- */
+#boostBar {
+  position: absolute; bottom: 52px; left: 50%; transform: translateX(-50%);
+  width: 190px; height: 22px; border-radius: 12px; overflow: hidden;
+  background: rgba(20,14,10,.6); border: 1px solid rgba(255,255,255,.12);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); z-index: 4; pointer-events: none;
+}
+#boostBar.hidden { display: none; }
+#boostFill {
+  position: absolute; inset: 0; width: 100%; transform-origin: left;
+  background: linear-gradient(90deg, var(--gold-dim), var(--gold));
+  transition: transform .05s linear;
+}
+#boostBar.cooling #boostFill { background: linear-gradient(90deg, #6b5440, #8a6e4f); }
+#boostBar.sprinting #boostFill { background: linear-gradient(90deg, #e74c3c, #ffb347); animation: pulse .4s ease-in-out infinite; }
+#boostLabel {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-family: var(--display); font-size: 11px; letter-spacing: 1.5px; color: #fff;
+  text-shadow: 0 1px 3px rgba(0,0,0,.8);
+}
 #specHint.hidden { display: none; }
 #specHint b { color: var(--gold); }
 
