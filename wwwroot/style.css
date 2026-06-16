@@ -239,6 +239,8 @@ button:disabled { opacity: .4; cursor: not-allowed; filter: grayscale(.3); }
 }
 #radar.hidden { display: none; }
 #playHint.hidden { display: none; }
+#specHint.hidden { display: none; }
+#specHint b { color: var(--gold); }
 
 /* ---------- pause ---------- */
 #pauseTitle { font-family: var(--display); font-size: 46px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 6px; }

@@ -10,6 +10,8 @@ const SPEED_STALIN = 255;
 let selfPos = null;         // client-predicted position of the local player
 let spectating = false;     // free-fly spectator state (after being caught)
 let specPos = null;
+let specMode = "free";      // "free" (fly) | "follow" (watch a player)
+let specTargetId = null;
 
 // ---- state -----------------------------------------------------------------
 let ws;
@@ -395,7 +397,24 @@ window.addEventListener("keydown", (e) => {
     const now = performance.now();
     if (now - lastTauntSent >= 1200) { lastTauntSent = now; ensureAudioCtx(); send({ type: "taunt" }); }
   }
+  // spectator controls (only while caught)
+  const meK = latest && latest.players.find((p) => p.id === myId);
+  if (meK && meK.caught) {
+    if (e.code === "Space") { e.preventDefault(); cycleSpectate(); }
+    if (e.code === "KeyF") { specMode = "free"; }
+  }
 });
+
+// Cycle the followed player (alive players, not yourself). Switches to follow mode.
+function cycleSpectate() {
+  if (!latest) return;
+  const cands = latest.players.filter((p) => p.id !== myId && !p.caught);
+  if (!cands.length) { specMode = "free"; return; }
+  let idx = cands.findIndex((p) => p.id === specTargetId);
+  idx = (idx + 1) % cands.length;
+  specTargetId = cands[idx].id;
+  specMode = "follow";
+}
 window.addEventListener("keyup", (e) => pressed.delete(e.code));
 window.addEventListener("blur", () => pressed.clear());
 
@@ -407,7 +426,8 @@ function onState(msg) {
   const lobby = msg.phase === "lobby";
   document.getElementById("lobbyHud").classList.toggle("hidden", !lobby);
   document.getElementById("hud").style.display = lobby ? "none" : "flex";
-  document.getElementById("playHint").classList.toggle("hidden", msg.phase !== "playing");
+  const meP = msg.players.find((p) => p.id === myId);
+  document.getElementById("playHint").classList.toggle("hidden", !(msg.phase === "playing" && !(meP && meP.caught)));
 
   // audio per phase — fresh random track when entering lobby vs a round
   Sound.setMode(lobby ? "lobby" : "game");
@@ -570,12 +590,33 @@ function renderScene(dt) {
   }
 
   const meNow = latest.players.find((p) => p.id === myId);
+  const specHintEl = document.getElementById("specHint");
+  let camHandled = false;
+
   if (meNow && meNow.caught) {
-    // Caught → free-fly spectator camera (roam the map and watch).
-    spectateFly(dt);
-    camera.position.set(specPos.x, specPos.y, specPos.z);
+    specHintEl.classList.remove("hidden");
+    // Follow-a-player view (see from their position, their facing).
+    if (specMode === "follow") {
+      const t = latest.players.find((p) => p.id === specTargetId && !p.caught);
+      const a = t && avatars.get(t.id);
+      if (a) {
+        camera.position.set(a.render.x, EYE_H, a.render.y);
+        camera.rotation.y = a.render.face;
+        camera.rotation.x = 0;
+        camHandled = true;
+        specHintEl.textContent = `Watching ${t.name}   ·   SPACE: next player   ·   F: free-fly`;
+      } else {
+        specMode = "free";        // target left or got caught → back to free-fly
+      }
+    }
+    if (specMode === "free") {
+      spectateFly(dt);
+      camera.position.set(specPos.x, specPos.y, specPos.z);
+      specHintEl.textContent = "Free-fly   ·   WASD + mouse   ·   SPACE: watch a player";
+    }
   } else {
-    spectating = false;
+    specHintEl.classList.add("hidden");
+    spectating = false; specMode = "free"; specTargetId = null;
     // Local player: client-side prediction (instant, no 30Hz stutter).
     predictSelf(dt);
     const myAv = avatars.get(myId);
@@ -587,8 +628,8 @@ function renderScene(dt) {
     if (selfPos) camera.position.set(selfPos.x, EYE_H, selfPos.y);
     else camera.position.set(latest.world.w / 2, 300, latest.world.h / 2);
   }
-  camera.rotation.y = yaw;
-  camera.rotation.x = pitch;
+
+  if (!camHandled) { camera.rotation.y = yaw; camera.rotation.x = pitch; }
 
   renderer.render(scene, camera);
   drawRadar();
