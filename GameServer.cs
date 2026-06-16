@@ -23,7 +23,16 @@ public class Player
 public class Wall
 {
     public float X, Y, W, H;
-    public Wall(float x, float y, float w, float h) { X = x; Y = y; W = w; H = h; }
+    public string Kind;   // building | crate | barrel | rock | tree | tower
+    public Wall(float x, float y, float w, float h, string kind = "building") { X = x; Y = y; W = w; H = h; Kind = kind; }
+}
+
+// Non-collidable decoration (bushes etc.).
+public class Prop
+{
+    public float X, Y, S;
+    public string Kind;
+    public Prop(float x, float y, float s, string kind) { X = x; Y = y; S = s; Kind = kind; }
 }
 
 public class Room
@@ -46,6 +55,7 @@ public class Room
     public const float WorldW = 2800;
     public const float WorldH = 2000;
     public List<Wall> GameWalls = new();
+    public List<Prop> GameProps = new();
     public int MapVersion = 0;      // bumps every time the arena is regenerated
 
     // lobby room
@@ -53,10 +63,13 @@ public class Room
     public const float LobbyH = 800;
     public List<Wall> LobbyWalls = new();
 
+    private static readonly List<Prop> NoProps = new();
+
     // which map is active right now
     public float ActiveW => Phase == "lobby" ? LobbyW : WorldW;
     public float ActiveH => Phase == "lobby" ? LobbyH : WorldH;
     public List<Wall> ActiveWalls => Phase == "lobby" ? LobbyWalls : GameWalls;
+    public List<Prop> ActiveProps => Phase == "lobby" ? NoProps : GameProps;
 
     public Room()
     {
@@ -75,27 +88,69 @@ public class Room
         GameWalls.Add(new Wall(WorldW - t, 0, t, WorldH));
 
         var rng = Random.Shared;
-        int target = rng.Next(20, 30);
-        var placed = new List<Wall>();
+        GameProps.Clear();
+        var buildings = new List<Wall>();
+
+        // 1) Buildings — spaced apart so corridors stay walkable.
+        int target = rng.Next(16, 24);
         int attempts = 0;
-        while (placed.Count < target && attempts < target * 12)
+        while (buildings.Count < target && attempts < target * 12)
         {
             attempts++;
             float w = rng.Next(110, 470), h = rng.Next(100, 210);
-            if (rng.Next(2) == 0) (w, h) = (h, w);   // random orientation
+            if (rng.Next(2) == 0) (w, h) = (h, w);
             float x = rng.Next(120, (int)(WorldW - w - 120));
             float y = rng.Next(120, (int)(WorldH - h - 120));
-            var c = new Wall(x, y, w, h);
-            // keep the Killer's centre spawn clear
+            var c = new Wall(x, y, w, h, "building");
             if (RectsOverlap(c.X, c.Y, c.W, c.H, WorldW / 2 - 170, WorldH / 2 - 170, 340, 340)) continue;
-            // keep buildings spaced apart (60px gap) so corridors stay walkable
             bool clash = false;
-            foreach (var r in placed)
+            foreach (var r in buildings)
                 if (RectsOverlap(c.X - 60, c.Y - 60, c.W + 120, c.H + 120, r.X, r.Y, r.W, r.H)) { clash = true; break; }
             if (clash) continue;
-            placed.Add(c);
+            buildings.Add(c);
             GameWalls.Add(c);
         }
+
+        // 2) Smaller solid props scattered around (collidable). They may cluster
+        //    near each other but never inside a building or the centre spawn.
+        void Scatter(string kind, int count, int smin, int smax)
+        {
+            int a = 0;
+            for (int n = 0; n < count && a < count * 10; a++)
+            {
+                float s = rng.Next(smin, smax);
+                float x = rng.Next(90, (int)(WorldW - s - 90));
+                float y = rng.Next(90, (int)(WorldH - s - 90));
+                if (RectsOverlap(x, y, s, s, WorldW / 2 - 150, WorldH / 2 - 150, 300, 300)) continue;
+                bool inBuilding = false;
+                foreach (var b in buildings)
+                    if (RectsOverlap(x - 20, y - 20, s + 40, s + 40, b.X, b.Y, b.W, b.H)) { inBuilding = true; break; }
+                if (inBuilding) continue;
+                GameWalls.Add(new Wall(x, y, s, s, kind));
+                n++;
+            }
+        }
+        Scatter("tower", rng.Next(3, 6), 90, 130);
+        Scatter("rock", rng.Next(10, 16), 55, 110);
+        Scatter("crate", rng.Next(14, 22), 34, 70);
+        Scatter("barrel", rng.Next(12, 20), 34, 50);
+        Scatter("tree", rng.Next(18, 28), 30, 42);
+
+        // 3) Bushes — purely decorative, walk-through.
+        int bushes = rng.Next(45, 75);
+        for (int n = 0, a = 0; n < bushes && a < bushes * 6; a++)
+        {
+            float s = rng.Next(28, 70);
+            float x = rng.Next(60, (int)(WorldW - 60));
+            float y = rng.Next(60, (int)(WorldH - 60));
+            bool inBuilding = false;
+            foreach (var b in buildings)
+                if (RectsOverlap(x, y, s, s, b.X, b.Y, b.W, b.H)) { inBuilding = true; break; }
+            if (inBuilding) continue;
+            GameProps.Add(new Prop(x, y, s, "bush"));
+            n++;
+        }
+
         MapVersion++;
     }
 
@@ -481,7 +536,8 @@ public class GameServer
             winner = room.Winner,
             stalinName = room.StalinName,
             world = new { w = room.ActiveW, h = room.ActiveH },
-            walls = room.ActiveWalls.Select(w => new { x = w.X, y = w.Y, w = w.W, h = w.H }),
+            walls = room.ActiveWalls.Select(w => new { x = w.X, y = w.Y, w = w.W, h = w.H, kind = w.Kind }),
+            props = room.ActiveProps.Select(p => new { x = p.X, y = p.Y, s = p.S, kind = p.Kind }),
             players
         };
         return Broadcast(room, msg);

@@ -333,21 +333,54 @@ function buildWorld(s) {
   wallGroup.clear();
 
   const palette = isLobby ? [0x8a7560] : [0x9c7a52, 0x86684a, 0xa6885c, 0x756853, 0x97705a];
+  const add = (geo, mat, x, y, z, ry) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    if (ry) m.rotation.y = ry;
+    m.castShadow = true; m.receiveShadow = true;
+    wallGroup.add(m);
+    return m;
+  };
+
   for (const w of s.walls || []) {
-    const isBorder = w.w >= s.world.w - 1 || w.h >= s.world.h - 1;
-    // deterministic per-building variety from its position
+    const cx = w.x + w.w / 2, cz = w.y + w.h / 2;
     const seed = Math.abs(Math.sin(w.x * 12.9898 + w.y * 78.233)) % 1;
-    const h = isBorder ? WALL_H : 90 + Math.floor(seed * 95);
-    const col = palette[Math.floor(seed * 997) % palette.length];
-    const wtex = wallBaseTex.clone(); wtex.needsUpdate = true;
-    wtex.wrapS = wtex.wrapT = THREE.RepeatWrapping;
-    wtex.repeat.set(Math.max(1, Math.round(w.w / 150)), Math.max(1, Math.round(h / 95)));
-    const mat = new THREE.MeshStandardMaterial({ map: wtex, color: col, roughness: 0.95 });
-    const box = new THREE.Mesh(new THREE.BoxGeometry(w.w, h, w.h), mat);
-    box.position.set(w.x + w.w / 2, h / 2, w.y + w.h / 2);
-    box.castShadow = true;
-    box.receiveShadow = true;
-    wallGroup.add(box);
+    const kind = w.kind || "building";
+
+    if (kind === "building") {
+      const isBorder = w.w >= s.world.w - 1 || w.h >= s.world.h - 1;
+      const h = isBorder ? WALL_H : 90 + Math.floor(seed * 95);
+      const col = palette[Math.floor(seed * 997) % palette.length];
+      const wtex = wallBaseTex.clone(); wtex.needsUpdate = true;
+      wtex.wrapS = wtex.wrapT = THREE.RepeatWrapping;
+      wtex.repeat.set(Math.max(1, Math.round(w.w / 150)), Math.max(1, Math.round(h / 95)));
+      add(new THREE.BoxGeometry(w.w, h, w.h), new THREE.MeshStandardMaterial({ map: wtex, color: col, roughness: 0.95 }), cx, h / 2, cz);
+    } else if (kind === "crate") {
+      const hh = Math.min(w.w, w.h) * (0.9 + seed * 0.4);
+      add(new THREE.BoxGeometry(w.w, hh, w.h), new THREE.MeshStandardMaterial({ color: 0x8a5a2b, roughness: 0.85 }), cx, hh / 2, cz, seed * 0.7);
+    } else if (kind === "barrel") {
+      const r = w.w / 2, hh = 70 + seed * 28;
+      add(new THREE.CylinderGeometry(r, r, hh, 14), new THREE.MeshStandardMaterial({ color: seed < 0.5 ? 0x7a2e26 : 0x3f6e4a, roughness: 0.55, metalness: 0.3 }), cx, hh / 2, cz);
+    } else if (kind === "rock") {
+      const r = w.w * 0.58;
+      add(new THREE.IcosahedronGeometry(r, 0), new THREE.MeshStandardMaterial({ color: 0x6f6a63, roughness: 1, flatShading: true }), cx, r * 0.55, cz, seed * 3).scale.y = 0.7;
+    } else if (kind === "tower") {
+      const r = w.w / 2, hh = 170 + seed * 70;
+      add(new THREE.CylinderGeometry(r * 0.85, r, hh, 16), new THREE.MeshStandardMaterial({ color: 0x8c7d63, roughness: 0.95 }), cx, hh / 2, cz);
+      add(new THREE.ConeGeometry(r * 1.15, r * 1.3, 16), new THREE.MeshStandardMaterial({ color: 0x5a4632, roughness: 0.9 }), cx, hh + r * 0.65, cz);
+    } else if (kind === "tree") {
+      const trunkH = 70 + seed * 55;
+      add(new THREE.CylinderGeometry(w.w * 0.32, w.w * 0.42, trunkH, 8), new THREE.MeshStandardMaterial({ color: 0x5b3a22, roughness: 1 }), cx, trunkH / 2, cz);
+      const fr = 46 + seed * 38;
+      add(new THREE.IcosahedronGeometry(fr, 0), new THREE.MeshStandardMaterial({ color: seed < 0.5 ? 0x3f6b32 : 0x4f7a3a, roughness: 1, flatShading: true }), cx, trunkH + fr * 0.55, cz).scale.y = 1.1;
+    }
+  }
+
+  // bushes — decorative ground cover (walk-through)
+  for (const p of s.props || []) {
+    const fr = p.s * 0.6;
+    const m = add(new THREE.IcosahedronGeometry(fr, 0), new THREE.MeshStandardMaterial({ color: 0x3e6233, roughness: 1, flatShading: true }), p.x + p.s / 2, fr * 0.5, p.y + p.s / 2, Math.random() * 3);
+    m.scale.y = 0.65;
   }
 }
 
