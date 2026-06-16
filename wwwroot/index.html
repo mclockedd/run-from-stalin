@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Run From Stalin</title>
+<title>Run for your Nostas…</title>
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -11,8 +11,9 @@
 <!-- HOME -->
 <div id="home" class="screen active">
   <div class="panel">
-    <h1>RUN FROM <span class="red">STALIN</span></h1>
-    <p class="tag">Spin the wheel. One of you becomes Stalin. The rest run.</p>
+    <div class="brand">RUN FOR YOUR</div>
+    <h1><span class="red">NOSTAS…</span></h1>
+    <p class="tag">Spin the wheel — one of you becomes <b>the Killer</b>.<br>Everyone else runs and hides.</p>
     <input id="nameInput" maxlength="14" placeholder="Your name" autocomplete="off" />
     <button id="createBtn" class="big">Create Party</button>
     <div class="or">— or —</div>
@@ -21,12 +22,13 @@
       <button id="joinBtn">Join</button>
     </div>
     <div id="homeError" class="error"></div>
+    <div class="controls-hint">WASD move · Mouse look · T taunt</div>
   </div>
 </div>
 
 <!-- WHEEL -->
 <div id="wheelScreen" class="screen">
-  <h2 id="wheelTitle">Choosing Stalin…</h2>
+  <h2 id="wheelTitle">Choosing the Killer…</h2>
   <canvas id="wheel" width="420" height="420"></canvas>
 </div>
 

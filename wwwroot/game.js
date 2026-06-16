@@ -8,6 +8,8 @@ const BODY_H = 52;
 const SPEED_RUN = 230;      // must match the server
 const SPEED_STALIN = 255;
 let selfPos = null;         // client-predicted position of the local player
+let spectating = false;     // free-fly spectator state (after being caught)
+let specPos = null;
 
 // ---- state -----------------------------------------------------------------
 let ws;
@@ -80,7 +82,7 @@ function connect(onOpenMsg) {
   ws.onmessage = (e) => handle(JSON.parse(e.data));
   ws.onclose = () => {
     if (myId) showHomeError("Disconnected from server.");
-    myId = null; latest = null; selfPos = null;
+    myId = null; latest = null; selfPos = null; spectating = false; specPos = null;
     if (Sound.current) Sound.current.pause();
     Sound.mode = null;
     showPause(false);
@@ -95,7 +97,7 @@ function handle(msg) {
   switch (msg.type) {
     case "error": showHomeError(msg.message); break;
     case "joined":
-      myId = msg.id; roomCode = msg.code; isHost = msg.isHost; selfPos = null;
+      myId = msg.id; roomCode = msg.code; isHost = msg.isHost; selfPos = null; spectating = false; specPos = null;
       document.getElementById("lobbyCodeVal").textContent = roomCode;
       Sound.unlock(); ensureAudioCtx(); Sound.setMode("lobby");
       show("game");
@@ -160,7 +162,7 @@ const WHEEL_COLORS = ["#c0392b", "#d4a017", "#27ae60", "#2980b9", "#8e44ad",
                       "#e67e22", "#16a085", "#c0392b", "#7f8c8d", "#e74c3c"];
 function runWheel(players, winnerId) {
   show("wheel");
-  document.getElementById("wheelTitle").textContent = "Choosing Stalin…";
+  document.getElementById("wheelTitle").textContent = "Choosing the Killer…";
   const n = players.length;
   const seg = (Math.PI * 2) / n;
   const winnerIdx = players.findIndex((p) => p.id === winnerId);
@@ -175,7 +177,7 @@ function runWheel(players, winnerId) {
     drawWheel(players, seg, finalRot * ease);
     if (t < 1) requestAnimationFrame(frame);
     else document.getElementById("wheelTitle").innerHTML =
-      `<span class="red">${escapeHtml(players[winnerIdx].name)}</span> is Stalin!`;
+      `<span class="red">${escapeHtml(players[winnerIdx].name)}</span> is the Killer!`;
   }
   requestAnimationFrame(frame);
 }
@@ -261,28 +263,37 @@ scene.add(wallGroup);
 let builtWorldKey = "";
 
 function buildWorld(s) {
-  const key = s.phase === "lobby" ? "lobby" : "game";
-  const fullKey = key + ":" + s.world.w + "x" + s.world.h + ":" + (s.walls ? s.walls.length : 0);
-  if (fullKey === builtWorldKey) return;
-  builtWorldKey = fullKey;
+  const isLobby = s.phase === "lobby";
+  const key = isLobby ? "lobby" : "game:" + (s.mapVersion || 0);
+  if (key === builtWorldKey) return;       // only rebuild when the map actually changes
+  builtWorldKey = key;
 
-  if (floor) { scene.remove(floor); floor.geometry.dispose(); floor.material.dispose(); }
+  if (floor) { scene.remove(floor); floor.geometry.dispose(); floor.material.map?.dispose(); floor.material.dispose(); }
   const tex = makeGridTexture();
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.repeat.set(s.world.w / 80, s.world.h / 80);
   floor = new THREE.Mesh(
     new THREE.PlaneGeometry(s.world.w, s.world.h),
-    new THREE.MeshStandardMaterial({ map: tex, color: key === "lobby" ? 0x5a4a6a : 0x6b5a3f, roughness: 1 })
+    new THREE.MeshStandardMaterial({ map: tex, color: isLobby ? 0x5a4a6a : 0x6b5a3f, roughness: 1 })
   );
   floor.rotation.x = -Math.PI / 2;
   floor.position.set(s.world.w / 2, 0, s.world.h / 2);
   scene.add(floor);
 
+  // dispose old wall meshes
+  for (const c of wallGroup.children) { c.geometry.dispose(); c.material.dispose(); }
   wallGroup.clear();
-  const wallMat = new THREE.MeshStandardMaterial({ color: key === "lobby" ? 0x6a5340 : 0x5a4632, roughness: 0.9 });
+
+  const palette = isLobby ? [0x6a5340] : [0x6e5236, 0x5a4632, 0x77603f, 0x504738, 0x6b4a3a];
   for (const w of s.walls || []) {
-    const box = new THREE.Mesh(new THREE.BoxGeometry(w.w, WALL_H, w.h), wallMat);
-    box.position.set(w.x + w.w / 2, WALL_H / 2, w.y + w.h / 2);
+    const isBorder = w.w >= s.world.w - 1 || w.h >= s.world.h - 1;
+    // deterministic per-building variety from its position
+    const seed = Math.abs(Math.sin(w.x * 12.9898 + w.y * 78.233)) % 1;
+    const h = isBorder ? WALL_H : 90 + Math.floor(seed * 95);
+    const col = palette[Math.floor(seed * 997) % palette.length];
+    const mat = new THREE.MeshStandardMaterial({ color: col, roughness: 0.92 });
+    const box = new THREE.Mesh(new THREE.BoxGeometry(w.w, h, w.h), mat);
+    box.position.set(w.x + w.w / 2, h / 2, w.y + w.h / 2);
     wallGroup.add(box);
   }
 }
@@ -441,8 +452,8 @@ function updateRoundHud(msg) {
   const me = msg.players.find((p) => p.id === myId);
   const roleEl = document.getElementById("role");
   if (me) {
-    if (me.stalin) { roleEl.textContent = "You are STALIN — catch them all"; roleEl.className = "role stalin"; }
-    else if (me.caught) { roleEl.textContent = "Caught! Spectating…"; roleEl.className = "role"; }
+    if (me.stalin) { roleEl.textContent = "You are THE KILLER — catch them all"; roleEl.className = "role stalin"; }
+    else if (me.caught) { roleEl.textContent = "Caught! Spectating — fly with WASD"; roleEl.className = "role"; }
     else { roleEl.textContent = "RUN! Survive the timer"; roleEl.className = "role runner"; }
   }
   const timerEl = document.getElementById("timer");
@@ -558,17 +569,24 @@ function renderScene(dt) {
     a.group.rotation.y = -a.render.face;
   }
 
-  // Local player: client-side prediction (instant, no 30Hz stutter).
-  predictSelf(dt);
-  const myAv = avatars.get(myId);
-  if (selfPos && myAv) {
-    myAv.render.x = selfPos.x; myAv.render.y = selfPos.y;
-    myAv.group.position.set(selfPos.x, 0, selfPos.y);
-    myAv.group.rotation.y = -yaw;
+  const meNow = latest.players.find((p) => p.id === myId);
+  if (meNow && meNow.caught) {
+    // Caught → free-fly spectator camera (roam the map and watch).
+    spectateFly(dt);
+    camera.position.set(specPos.x, specPos.y, specPos.z);
+  } else {
+    spectating = false;
+    // Local player: client-side prediction (instant, no 30Hz stutter).
+    predictSelf(dt);
+    const myAv = avatars.get(myId);
+    if (selfPos && myAv) {
+      myAv.render.x = selfPos.x; myAv.render.y = selfPos.y;
+      myAv.group.position.set(selfPos.x, 0, selfPos.y);
+      myAv.group.rotation.y = -yaw;
+    }
+    if (selfPos) camera.position.set(selfPos.x, EYE_H, selfPos.y);
+    else camera.position.set(latest.world.w / 2, 300, latest.world.h / 2);
   }
-
-  if (selfPos) camera.position.set(selfPos.x, EYE_H, selfPos.y);
-  else camera.position.set(latest.world.w / 2, 300, latest.world.h / 2);
   camera.rotation.y = yaw;
   camera.rotation.x = pitch;
 
@@ -597,10 +615,37 @@ function predictSelf(dt) {
     }
   }
 
-  // reconcile: snap on big jumps (spawn/teleport), otherwise gently pull to truth
+  // reconcile: snap big jumps (spawn); ignore tiny latency drift (dead zone) so
+  // the camera doesn't fight the prediction; gently correct medium desyncs.
   const ddx = me.x - selfPos.x, ddy = me.y - selfPos.y;
-  if (ddx * ddx + ddy * ddy > 250 * 250) { selfPos.x = me.x; selfPos.y = me.y; }
-  else { const c = Math.min(1, dt * 10); selfPos.x += ddx * c; selfPos.y += ddy * c; }
+  const d2 = ddx * ddx + ddy * ddy;
+  if (d2 > 260 * 260) { selfPos.x = me.x; selfPos.y = me.y; }
+  else if (d2 > 48 * 48) { const c = Math.min(1, dt * 8); selfPos.x += ddx * c; selfPos.y += ddy * c; }
+}
+
+// Free-flying spectator camera (after being caught). Full 3D movement, no walls.
+function spectateFly(dt) {
+  if (!spectating || !specPos) {
+    spectating = true;
+    specPos = {
+      x: selfPos ? selfPos.x : latest.world.w / 2,
+      y: EYE_H + 40,
+      z: selfPos ? selfPos.y : latest.world.h / 2,
+    };
+  }
+  if (dt <= 0) return;
+  const f = (pressed.has("KeyW") || pressed.has("ArrowUp") ? 1 : 0) - (pressed.has("KeyS") || pressed.has("ArrowDown") ? 1 : 0);
+  const r = (pressed.has("KeyD") || pressed.has("ArrowRight") ? 1 : 0) - (pressed.has("KeyA") || pressed.has("ArrowLeft") ? 1 : 0);
+  const cp = Math.cos(pitch);
+  const fwd = { x: -Math.sin(yaw) * cp, y: Math.sin(pitch), z: -Math.cos(yaw) * cp };
+  const rgt = { x: Math.cos(yaw), y: 0, z: -Math.sin(yaw) };
+  const sp = 430;
+  specPos.x += (fwd.x * f + rgt.x * r) * sp * dt;
+  specPos.y += (fwd.y * f) * sp * dt;
+  specPos.z += (fwd.z * f + rgt.z * r) * sp * dt;
+  specPos.x = Math.max(0, Math.min(latest.world.w, specPos.x));
+  specPos.z = Math.max(0, Math.min(latest.world.h, specPos.z));
+  specPos.y = Math.max(12, Math.min(800, specPos.y));
 }
 
 // Client-side copy of the server's circle-vs-rect collision (must match).

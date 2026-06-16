@@ -46,6 +46,7 @@ public class Room
     public const float WorldW = 2800;
     public const float WorldH = 2000;
     public List<Wall> GameWalls = new();
+    public int MapVersion = 0;      // bumps every time the arena is regenerated
 
     // lobby room
     public const float LobbyW = 1100;
@@ -59,11 +60,12 @@ public class Room
 
     public Room()
     {
-        BuildGameMap();
+        GenerateGameMap();
         BuildLobbyMap();
     }
 
-    private void BuildGameMap()
+    // Procedurally scatters buildings across the arena — a fresh layout each round.
+    public void GenerateGameMap()
     {
         GameWalls.Clear();
         float t = 30;
@@ -71,18 +73,34 @@ public class Room
         GameWalls.Add(new Wall(0, WorldH - t, WorldW, t));
         GameWalls.Add(new Wall(0, 0, t, WorldH));
         GameWalls.Add(new Wall(WorldW - t, 0, t, WorldH));
-        // Interior "buildings" scattered across the larger arena.
-        var b = new (float x, float y, float w, float h)[]
+
+        var rng = Random.Shared;
+        int target = rng.Next(20, 30);
+        var placed = new List<Wall>();
+        int attempts = 0;
+        while (placed.Count < target && attempts < target * 12)
         {
-            (300, 250, 360, 140), (900, 200, 160, 360), (1400, 300, 400, 130),
-            (2050, 250, 150, 400), (2400, 520, 160, 420), (250, 660, 150, 420),
-            (700, 820, 420, 140), (1300, 650, 170, 170), (1520, 960, 360, 150),
-            (2060, 820, 150, 300), (350, 1260, 420, 140), (960, 1220, 160, 420),
-            (1360, 1420, 420, 140), (1920, 1320, 150, 420), (2360, 1260, 300, 150),
-            (610, 1580, 300, 140), (2120, 1660, 420, 140), (1260, 1720, 300, 130),
-        };
-        foreach (var w in b) GameWalls.Add(new Wall(w.x, w.y, w.w, w.h));
+            attempts++;
+            float w = rng.Next(110, 470), h = rng.Next(100, 210);
+            if (rng.Next(2) == 0) (w, h) = (h, w);   // random orientation
+            float x = rng.Next(120, (int)(WorldW - w - 120));
+            float y = rng.Next(120, (int)(WorldH - h - 120));
+            var c = new Wall(x, y, w, h);
+            // keep the Killer's centre spawn clear
+            if (RectsOverlap(c.X, c.Y, c.W, c.H, WorldW / 2 - 170, WorldH / 2 - 170, 340, 340)) continue;
+            // keep buildings spaced apart (60px gap) so corridors stay walkable
+            bool clash = false;
+            foreach (var r in placed)
+                if (RectsOverlap(c.X - 60, c.Y - 60, c.W + 120, c.H + 120, r.X, r.Y, r.W, r.H)) { clash = true; break; }
+            if (clash) continue;
+            placed.Add(c);
+            GameWalls.Add(c);
+        }
+        MapVersion++;
     }
+
+    private static bool RectsOverlap(float ax, float ay, float aw, float ah, float bx, float by, float bw, float bh)
+        => ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
 
     private void BuildLobbyMap()
     {
@@ -317,6 +335,7 @@ public class GameServer
 
     private void StartRound(Room room)
     {
+        room.GenerateGameMap();   // fresh terrain every round
         var players = room.Players.Values.ToList();
         foreach (var p in players)
         {
@@ -456,6 +475,7 @@ public class GameServer
             phase = room.Phase,
             code = room.Code,
             hostId = room.HostId,
+            mapVersion = room.MapVersion,
             timeLeft = MathF.Max(0, MathF.Round(room.TimeLeft, 1)),
             countdown = MathF.Ceiling(MathF.Max(0, room.Countdown)),
             winner = room.Winner,

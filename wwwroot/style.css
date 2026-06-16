@@ -51,11 +51,20 @@ body {
   background: linear-gradient(90deg, transparent, var(--gold), transparent);
 }
 
+.brand {
+  font-family: var(--display); font-weight: 500;
+  font-size: 22px; letter-spacing: 6px; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 2px;
+}
 h1 {
   font-family: var(--display); font-weight: 700;
-  font-size: 40px; line-height: 1; letter-spacing: 3px;
+  font-size: 52px; line-height: 1; letter-spacing: 2px;
   text-transform: uppercase; margin-bottom: 10px;
   text-shadow: 0 2px 14px rgba(0,0,0,.5);
+}
+.controls-hint {
+  margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,.07);
+  color: var(--muted); font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
 }
 h2 { font-family: var(--display); font-weight: 600; letter-spacing: 1px; margin-bottom: 10px; text-transform: uppercase; }
 .red { color: var(--red-bright); text-shadow: 0 0 18px rgba(231,76,60,.45); }
