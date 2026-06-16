@@ -242,6 +242,21 @@ button:disabled { opacity: .4; cursor: not-allowed; filter: grayscale(.3); }
 #specHint.hidden { display: none; }
 #specHint b { color: var(--gold); }
 
+#ghostHud {
+  position: absolute; bottom: 56px; left: 50%; transform: translateX(-50%);
+  width: 360px; max-width: 90vw; text-align: center; pointer-events: none;
+}
+#ghostHud.hidden { display: none; }
+#ghostMsg { font-family: var(--display); font-size: 18px; letter-spacing: .5px; text-shadow: 0 1px 4px rgba(0,0,0,.9); }
+#ghostMsg.guarded { color: var(--red-bright); }
+#ghostMsg.holding { color: #6fe3ff; }
+#reviveBarWrap {
+  height: 12px; margin: 8px auto 6px; width: 280px; max-width: 80vw;
+  background: rgba(0,0,0,.5); border: 1px solid rgba(255,255,255,.15); border-radius: 7px; overflow: hidden;
+}
+#reviveBar { height: 100%; width: 0%; background: linear-gradient(90deg, #4fd0ff, #6fffd0); transition: width .08s linear; }
+#ghostSub { color: var(--muted); font-size: 12px; letter-spacing: 1px; text-transform: uppercase; }
+
 /* ---------- pause ---------- */
 #pauseTitle { font-family: var(--display); font-size: 46px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 6px; }
 #pauseOverlay .lockbox { display: flex; flex-direction: column; align-items: center; gap: 4px; }
